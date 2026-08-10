@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# outputs / artifacts
+*.gif
+*.mp4
+*.png
+runs/
+wandb/
+checkpoints/
+*.msgpack
+*.pkl
+
+# env / editor
+.env
+.vscode/
+.idea/
+.DS_Store

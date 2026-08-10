@@ -1,0 +1,9 @@
+jax[cuda12]==0.10.0
+flax==0.12.7
+optax==0.2.8
+chex==0.1.91
+numpy==2.4.6
+imageio==2.37.0
+imageio-ffmpeg
+# jaxatari from source, pinned to the commit you built against:
+-e git+https://github.com/k4ntz/JAXAtari.git@fcae502bc341c77f14805cf596b0a23063ef756f#egg=jaxatari
