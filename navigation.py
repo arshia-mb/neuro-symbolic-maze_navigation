@@ -2,6 +2,7 @@
 Symbolic navigator.
 The field V[cell] is the cheapest cost to reach the nearest goal from that cell. The policy walks downhill on V. No learning, no enemy avoidance.
 """
+import os
 from typing import Callable, Tuple
 
 import chex
@@ -142,7 +143,10 @@ def main():
     out = rollout(env, act_fn, init_carry, seed=0, max_steps=MAX_STEP, render=True)
 
     print(f"[navigation] score={out['score']}  frames={out['steps']}")
-    save_gif(out["frames"], "navigation.gif")
+    here = os.path.dirname(os.path.abspath(__file__))
+    out_dir = os.path.join(here, "outputs")
+    os.makedirs(out_dir, exist_ok=True)
+    save_gif(out["frames"], os.path.join(out_dir, "navigation.gif"))
 
 if __name__ == "__main__":
     main()
