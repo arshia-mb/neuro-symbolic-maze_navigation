@@ -1,13 +1,12 @@
 """
 Neuro-symbolic agent for Ms. Pac-Man: learned danger field + symbolic planner.
+
 Pipeline per step:
     obs -> extract_features -> DangerNet(params) -> danger
-        -> plan (value iteration with step_cost = 1 + danger) -> V
+        -> plan (value iteration with step_cost = 1 + softplus(danger)) -> V
         -> stochastic policy -> action, logp -> env.step
 
-Training: REINFORCE + mean baseline. Game reward flows back through the
-DIFFERENTIABLE planner into DangerNet. The planner is symbolic (not learned);
-only the danger cost field is learned.
+Training: REINFORCE + mean baseline. Game reward flows back through the DIFFERENTIABLE planner into DangerNet. The planner is symbolic (not learned); only the danger cost field is learned.
 """
 import os
 from typing import Callable, Tuple
@@ -22,7 +21,7 @@ from jax.flatten_util import ravel_pytree
 
 LARGE_COST = 1e6
 RELAX_IT = 200
-TRAIN_MAX_STEP = 200         # capped for memory during Path-1 training
+TRAIN_MAX_STEP = 200         # capped for memory
 EVAL_MAX_STEP = 3000         # full episodes for rendering/eval
 EPOCHS = 100
 DIR_TO_ACTION = 2
@@ -33,8 +32,10 @@ DELTA = jnp.array([[0, -1], [1, 0], [-1, 0], [0, 1]])   # (up,right,left,down)->
 def pos_to_grid(pos: chex.Array):
     return (pos[0] + 5) // 4, (pos[1] + 3) // 4
 
+
 def get_walkable(maze: chex.Array):
     return maze.any(axis=-1)
+
 
 @jax.jit
 def pellet_indices(pellets: chex.Array):
@@ -57,11 +58,12 @@ def get_goals(pellets: chex.Array, walkable: chex.Array, gx: chex.Array, gy: che
 # ----- Planner (danger-consuming) -----
 @jax.jit
 def plan(maze, goal_mask, walkable, danger):
-    """Value iteration with step_cost = 1 + danger. Pure jnp so gradient flows."""
+    """Value iteration with step_cost = 1 + softplus(danger).
+    """
     V_init = jnp.where(goal_mask, 0.0, LARGE_COST)
 
     def relax(V, _):
-        step_cost = 1.0 + danger
+        step_cost = 1.0 + jax.nn.softplus(danger)    # danger >= 0: only ever adds cost
         G = step_cost + V
         up = jnp.roll(G, 1, axis=1)
         right = jnp.roll(G, -1, axis=0)
@@ -209,6 +211,7 @@ def train(env, seed=0, epochs=EPOCHS, n_episodes=1, lr=1e-3):
     return params
 
 
+# ----- Eval / rollout seam -----
 def make_act_fn(env, params, maze_id: int = 0, seed: int = 0,
                 greedy: bool = True) -> Tuple[Callable, Tuple]:
     """Build (act_fn, init_carry) for utility.rollout.
@@ -235,11 +238,13 @@ def make_act_fn(env, params, maze_id: int = 0, seed: int = 0,
                                V[gx2 - 1, gy2], V[gx2, gy2 + 1]])
             legal = maze[gx2, gy2]
             V_nbr = jnp.where(legal, V_nbr, LARGE_COST)
-            d = jnp.argmin(V_nbr).astype(jnp.int32)
+            tie = jnp.zeros(4).at[prev_dir].add(-1e-3)   # break exact ties toward heading
+            d = jnp.argmin(V_nbr + tie).astype(jnp.int32)
             d = jnp.where(goals[gx2, gy2], prev_dir, d)
             action = d + DIR_TO_ACTION
         else:
             action, _logp, d = policy(V, maze, goals, pos, prev_dir, act_key)
+
         return action, d, key
 
     def act_fn(obs, carry):
@@ -251,6 +256,7 @@ def make_act_fn(env, params, maze_id: int = 0, seed: int = 0,
     return act_fn, (jnp.int32(0), jax.random.PRNGKey(seed))
 
 
+# ----- Main -----
 def main():
     from utility import rollout, save_gif
 

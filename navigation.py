@@ -114,7 +114,7 @@ def greedy_action(V: chex.Array, maze: chex.Array, goal_mask: chex.Array,
     d = jnp.where(goal_mask[gx, gy], prev_dir, d)
     return d + DIR_TO_ACTION, d
 
-#--Helper function--
+#--Eval / rollout--
 def make_act_fn(env, maze_id: int = 0) -> Tuple[Callable, chex.Array]:
     """Build (act_fn, init_carry) for utility.rollout. 
     """
