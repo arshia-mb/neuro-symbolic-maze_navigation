@@ -54,9 +54,10 @@ def run(env, enc, params, seed=SEED, max_steps=MAX_STEPS, render=True):
  
     for t in range(max_steps):
         action, prev_dir = decide(obs, prev_dir)
-        #danger = compute_danger(obs, maze, walkable, params, net, features)
-        #sc = jax.nn.softplus(danger)
-        #print("danger:", float(danger.min()), float(danger.mean()), float(danger.max()),"| softplus:", float(sc.min()), float(sc.mean()), float(sc.max()))
+        if t%100==0:
+            danger = compute_danger(obs, maze, walkable, params, net, features)
+            sc = jax.nn.softplus(danger)
+            print("danger:", float(danger.min()), float(danger.mean()), float(danger.max()),"| softplus:", float(sc.min()), float(sc.mean()), float(sc.max()))
         obs, state, reward, done, info = env.step(state, action)
 
         if render:

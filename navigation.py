@@ -16,7 +16,7 @@ def plan(maze, goal_mask, walkable, danger):
 
     @jax.checkpoint
     def relax(V, _):
-        step_cost = 1.0 + jax.nn.softplus(danger) #make sure danger >= 0
+        step_cost = 1.0 + danger 
         G = step_cost + V 
         up = jnp.roll(G, 1, axis=1)
         right = jnp.roll(G, -1, axis=0)
