@@ -7,16 +7,14 @@ LARGE_COST = 1e6
 RELAX_IT = 128
 DIR_TO_ACTION = 2 #direction to action
 
-
 # ----- Navigation -----
 def plan(maze, goal_mask, walkable, danger):
     """Value iteration maze solver. Move towards the lowest value.
-    """
+    """    
     V_init = jnp.where(goal_mask, 0.0, LARGE_COST)
 
     @jax.checkpoint
     def relax(V, _):
-        danger = danger - danger.min()
         step_cost = 1.0 + danger 
         G = step_cost + V 
         up = jnp.roll(G, 1, axis=1)

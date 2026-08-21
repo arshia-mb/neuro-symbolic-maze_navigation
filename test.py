@@ -34,7 +34,7 @@ def greedy_action(V, maze, goal_mask, pos, prev_dir, snap):
 
 def ghost_diagnostic(obs, danger, walkable, snap):
     """Compare danger AT ghost cells vs the field average over walkable cells.
-    """
+    """  
     field_mean = float(jnp.sum(danger * walkable) / jnp.sum(walkable))
     ghost_vals = []
     for g in obs.ghost_positions:
