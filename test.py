@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import jaxatari
 import numpy as np
 import os
-
+import numpy as np, matplotlib.pyplot as plt
 from navigation import plan 
 from agent import DangerNet, load_params, LARGE_COST, DIR_TO_ACTION
 from mspacman_encoder import make_mspacman_encoder
@@ -29,6 +29,8 @@ def greedy_action(V, maze, goal_mask, pos, prev_dir, snap):
     d = jnp.where(goal_mask[gx, gy], prev_dir, d).astype(jnp.int32)   # coast on goal cell
     return d + DIR_TO_ACTION, d
 
+def compute_danger(obs, maze, walkable, params, net, features):
+    return net.apply(params, features(obs, maze, walkable))
 
 def run(env, enc, params, seed=SEED, max_steps=MAX_STEPS, render=True):
     """Play one greedy episode. Returns (score, frames)."""
@@ -45,13 +47,18 @@ def run(env, enc, params, seed=SEED, max_steps=MAX_STEPS, render=True):
     @jax.jit
     def decide(obs, prev_dir):
         danger = net.apply(params, features(obs, maze, walkable))
+        sc = jax.nn.softplus(danger)
         goals = get_goal(obs, walkable, gx, gy)
         V = plan(maze, goals, walkable, danger)
         return greedy_action(V, maze, goals, obs.player_position, prev_dir, snap)
  
-    for _ in range(max_steps):
+    for t in range(max_steps):
         action, prev_dir = decide(obs, prev_dir)
+        #danger = compute_danger(obs, maze, walkable, params, net, features)
+        #sc = jax.nn.softplus(danger)
+        #print("danger:", float(danger.min()), float(danger.mean()), float(danger.max()),"| softplus:", float(sc.min()), float(sc.mean()), float(sc.max()))
         obs, state, reward, done, info = env.step(state, action)
+
         if render:
             frames.append(np.asarray(env.render(state), dtype=np.uint8))
         if bool(done):
@@ -85,6 +92,11 @@ def main():
     score, frames = run(env, enc, params, render=True)
     print(f"[test] score={score}  frames={len(frames)}")
     save_gif(frames, f"outputs/test_maze{MAZE_ID}.gif")
+
+    r = np.load("outputs/mspacman_returns.npy")
+    plt.plot(r, alpha=0.3, label="return")
+    plt.plot(np.convolve(r, np.ones(20)/20, mode="valid"), label="smoothed")
+    plt.xlabel("epoch"); plt.ylabel("return"); plt.legend(); plt.savefig("outputs/curve.png")
  
  
 if __name__ == "__main__":

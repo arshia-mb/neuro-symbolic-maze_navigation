@@ -22,6 +22,8 @@ DIR_TO_ACTION = 2 #direction to action
 MAX_EPISODE_LEN = 500
 EPOCHS = 300
 N_ENV = 6
+DANGER_MAX = 10
+DEATH_PENALTY = 50
 
 
 
@@ -37,7 +39,7 @@ class DangerNet(nn.Module):
         x = nn.Conv(self.hidden, (3,3), padding="SAME")(x)
         x = nn.relu(x)
         x = nn.Conv(1, (1,1), padding="SAME")(x)
-        return x[..., 0] #maze shape
+        return jax.nn.sigmoid(x[..., 0]) * DANGER_MAX
 
 def policy(V, maze, goal_mask, pos, prev_dir, key, snap, temperature=1.0):
     """Stochastic, differentiable policy.
@@ -84,7 +86,7 @@ def load_params(params_template, path):
     with open(path, "rb") as f:
         return fs.from_bytes(params_template, f.read())
     
-def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_EPISODE_LEN, lr=1e-3):
+def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_EPISODE_LEN, lr=3e-4):
     """Training the agent using by doing batch learning.
     """
     key = jax.random.PRNGKey(seed)
@@ -108,19 +110,19 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
         params = load_params(template, model_path)
     else:
         params = net.init(init_key, dummy)
-    optimizer = optax.adam(lr)
+    optimizer = optax.chain( optax.clip_by_global_norm(1.0), optax.adam(lr))
     opt_state = optimizer.init(params)
 
     def episode_loss(params,key):
         reset_key, key = jax.random.split(key)
         obs, state = env.reset(reset_key)
         prev_dir = jnp.int32(0)
-        init_carry = (state, obs, prev_dir, key)
+        init_carry = (state, obs, prev_dir, state.lives, key)
 
         def step(carry, _):
             """Running one step of the game with fixed length.
             """
-            state, obs, prev_dir, key = carry
+            state, obs, prev_dir, prev_lives, key = carry
             key, act_key = jax.random.split(key)
             danger = net.apply(params, features(obs, maze, walkable))
             goals = get_goal(obs, walkable, gx, gy)
@@ -128,7 +130,12 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             action, logp, prev_dir = policy(V, maze, goals, obs.player_position, prev_dir, act_key, snap)
 
             obs, state, reward, done, _ = env.step(state, action)
-            new_carry = (state, obs, prev_dir, key)
+
+            lives = state.lives
+            died = (lives < prev_lives).astype(jnp.float32)
+            reward = reward - DEATH_PENALTY * died
+
+            new_carry = (state, obs, prev_dir, lives, key)
             output = (logp, reward, done)
 
             return new_carry, output
