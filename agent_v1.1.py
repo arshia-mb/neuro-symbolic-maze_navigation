@@ -12,9 +12,11 @@ from navigation import plan, GameEncoder
 from jax.flatten_util import ravel_pytree
 
 LARGE_COST = 1e6
-MAX_EPISODE_LEN = 500
-EPOCHS = 2
 DIR_TO_ACTION = 2 #direction to action
+MAX_EPISODE_LEN = 500
+EPOCHS = 10
+N_ENV = 4
+
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
@@ -88,7 +90,6 @@ def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_
     optimizer = optax.adam(lr)
     opt_state = optimizer.init(params)
 
-    #do i even need this??
     def episode_loss(params,key):
         reset_key, key = jax.random.split(key)
         obs, state = env.reset(reset_key)
@@ -115,17 +116,27 @@ def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_
         loss, total_return = reinforce_loss(logps, rewards, dones)
         return loss, total_return
 
-    for epoch in range(epochs):
-        key, sub = jax.random.split(key)
+    def batch_loss(params, key):
+        keys = jax.random.split(key, N_ENV)
+        losses, returns = jax.vmap(episode_loss, in_axes=(None, 0))(params,keys)
+        return losses.mean(), returns.mean()
 
-        (loss, total_return), grads = jax.value_and_grad(episode_loss, has_aux=True)(params,sub)
+    @jax.jit
+    def update(params, opt_state, key):
+        (loss, total_return), grads = jax.value_and_grad(batch_loss, has_aux=True)(params,key)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
+        return params, opt_state, loss, total_return, grads
 
-        flat, _ = ravel_pytree(grads)          # flatten all param grads into one 1-D array
-        gnorm = jnp.abs(flat).sum() 
+    for epoch in range(epochs):
+        key, sub = jax.random.split(key)
+        params, opt_state, loss, total_return, grads = update(params, opt_state, sub)
 
-        print(f"epoch {epoch}  loss {float(loss):.3f}  grad_norm {float(gnorm):.4f} total_return: {float(total_return)}")
+        #flat, _ = ravel_pytree(grads)          # flatten all param grads into one 1-D array
+        #gnorm = jnp.abs(flat).sum() 
+        #print(f"epoch {epoch}  loss {float(loss):.3f}  grad_norm {float(gnorm):.4f} total_return: {float(total_return)}")
+        
+        print(f"epoch {epoch}  loss {float(loss):.3f} total_return: {float(total_return)}")
     
     return params
 
