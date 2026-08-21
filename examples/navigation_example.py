@@ -135,7 +135,7 @@ def make_act_fn(env, maze_id: int = 0) -> Tuple[Callable, chex.Array]:
 
 #--Main Loop--
 def main():
-    from utility import rollout, save_gif
+    from projects.maze_solver.test import rollout, save_gif
 
     env = jaxatari.make("mspacman")
     act_fn, init_carry = make_act_fn(env, maze_id=0)

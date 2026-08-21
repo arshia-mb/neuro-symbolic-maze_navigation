@@ -258,7 +258,7 @@ def make_act_fn(env, params, maze_id: int = 0, seed: int = 0,
 
 # ----- Main -----
 def main():
-    from utility import rollout, save_gif
+    from projects.maze_solver.test import rollout, save_gif
 
     env = jaxatari.make("mspacman")
     params = train(env, epochs=2, n_episodes=1)      # bring-up: watch grad_norm
