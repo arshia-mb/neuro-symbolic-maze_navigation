@@ -8,8 +8,9 @@ import jaxatari
 import jax.numpy as jnp
 import flax.linen as nn
 import optax
-from navigation import plan, GameEncoder
-from jax.flatten_util import ravel_pytree
+from navigation import plan
+#from jax.flatten_util import ravel_pytree
+import os
 
 LARGE_COST = 1e6
 DIR_TO_ACTION = 2 #direction to action
@@ -17,6 +18,8 @@ MAX_EPISODE_LEN = 500
 EPOCHS = 10
 N_ENV = 4
 
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"      # use more of the 6GB (default holds back)
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"    # on-demand alloc, less fragmentation
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
@@ -145,7 +148,7 @@ def main():
     from mspacman_encoder import make_mspacman_encoder
     env = jaxatari.make("mspacman")
     enc = make_mspacman_encoder(env)
-    params = train(env, enc, epochs=2)   # start with 2 to confirm it runs
+    params = train(env, enc, epochs=EPOCHS)
 
 if __name__ == "__main__":
     main()
