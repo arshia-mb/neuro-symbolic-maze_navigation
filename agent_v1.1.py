@@ -15,8 +15,8 @@ import os
 LARGE_COST = 1e6
 DIR_TO_ACTION = 2 #direction to action
 MAX_EPISODE_LEN = 500
-EPOCHS = 10
-N_ENV = 4
+EPOCHS = 300
+N_ENV = 6
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"      # use more of the 6GB (default holds back)
 os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"    # on-demand alloc, less fragmentation
@@ -131,6 +131,7 @@ def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss, total_return, grads
 
+    avg_return = 0
     for epoch in range(epochs):
         key, sub = jax.random.split(key)
         params, opt_state, loss, total_return, grads = update(params, opt_state, sub)
@@ -139,7 +140,8 @@ def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_
         #gnorm = jnp.abs(flat).sum() 
         #print(f"epoch {epoch}  loss {float(loss):.3f}  grad_norm {float(gnorm):.4f} total_return: {float(total_return)}")
         
-        print(f"epoch {epoch}  loss {float(loss):.3f} total_return: {float(total_return)}")
+        avg_return = 0.9 * avg_return + 0.1 * float(total_return) 
+        print(f"epoch {epoch}  return {float(total_return):.0f}  avg {avg_return:.0f}")
     
     return params
 
