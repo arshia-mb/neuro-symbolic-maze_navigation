@@ -3,14 +3,19 @@ Neuro-symbolic agent for solving mazes with enemy avoidance: learned danger fiel
 """
 
 import chex
+import os
+os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"      # use more of the 6GB (default holds back)
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"    # on-demand alloc, less fragmentation
 import jax
-import jaxatari
 import jax.numpy as jnp
+import jaxatari
 import flax.linen as nn
+import flax.serialization as fs
 import optax
 from navigation import plan
+import numpy as np
 #from jax.flatten_util import ravel_pytree
-import os
+import time
 
 LARGE_COST = 1e6
 DIR_TO_ACTION = 2 #direction to action
@@ -18,8 +23,7 @@ MAX_EPISODE_LEN = 500
 EPOCHS = 300
 N_ENV = 6
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"      # use more of the 6GB (default holds back)
-os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"    # on-demand alloc, less fragmentation
+
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
@@ -72,11 +76,21 @@ def reinforce_loss(logps, rewards, dones, gamma=0.99):
     return loss, total_return
 
 # ----- Training -----
-def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_EPISODE_LEN, lr=1e-3):
+def save_params(params, path):
+    with open(path, "wb") as f:
+        f.write(fs.to_bytes(params))
+
+def load_params(params_template, path):
+    with open(path, "rb") as f:
+        return fs.from_bytes(params_template, f.read())
+    
+def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_EPISODE_LEN, lr=1e-3):
     """Training the agent using by doing batch learning.
     """
     key = jax.random.PRNGKey(seed)
     key, init_key = jax.random.split(key)
+
+    os.makedirs("outputs", exist_ok=True)
 
     obs, _ = env.reset(init_key)
 
@@ -89,7 +103,11 @@ def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_
 
     net = DangerNet()
     dummy = features(obs, maze, walkable)
-    params = net.init(init_key, dummy)
+    if model_path:
+        template = net.init(jax.random.PRNGKey(0), dummy)
+        params = load_params(template, model_path)
+    else:
+        params = net.init(init_key, dummy)
     optimizer = optax.adam(lr)
     opt_state = optimizer.init(params)
 
@@ -129,20 +147,36 @@ def train(env: chex.Array, game_encoder, seed=0, epochs=EPOCHS, episode_len=MAX_
         (loss, total_return), grads = jax.value_and_grad(batch_loss, has_aux=True)(params,key)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return params, opt_state, loss, total_return, grads
+        gnorm = jnp.sqrt(sum(jnp.sum(g**2) for g in jax.tree_util.tree_leaves(grads)))
+        return params, opt_state, loss, total_return, gnorm
 
-    avg_return = 0
+    avg_return = None
+    returns_log = []
+    best_return = 0
+    start = time.time()
     for epoch in range(epochs):
         key, sub = jax.random.split(key)
-        params, opt_state, loss, total_return, grads = update(params, opt_state, sub)
+        params, opt_state, loss, total_return, gnorm = update(params, opt_state, sub)
 
-        #flat, _ = ravel_pytree(grads)          # flatten all param grads into one 1-D array
-        #gnorm = jnp.abs(flat).sum() 
-        #print(f"epoch {epoch}  loss {float(loss):.3f}  grad_norm {float(gnorm):.4f} total_return: {float(total_return)}")
-        
-        avg_return = 0.9 * avg_return + 0.1 * float(total_return) 
-        print(f"epoch {epoch}  return {float(total_return):.0f}  avg {avg_return:.0f}")
-    
+        avg_return = float(total_return) if avg_return is None else 0.9 * avg_return + 0.1 * float(total_return)
+        returns_log.append(float(total_return))
+
+        if epoch % 10 == 0:
+            elapsed = time.time() - start 
+            per_epoch = elapsed / (epoch + 1)
+            eta = per_epoch * (epochs - epoch - 1)
+            print(f"epoch {epoch}  return {float(total_return):.0f}  avg {avg_return:.0f}  gnorm {float(gnorm):.2f}  [ETA {eta/60:.1f} min]")
+
+        if epoch % 100 == 0:
+            save_params(params, f"outputs/ckpt_epoch{epoch}.msgpack")
+
+        if float(total_return) > best_return:
+            best_return = float(total_return)
+            save_params(params, "outputs/mspacman_best.msgpack")
+
+    save_params(params, "outputs/mspacman_params.msgpack")
+    np.save("outputs/mspacman_returns.npy", np.array(returns_log))
+    print(f"final return: {returns_log[-1]:.0f}  last_avgs: {np.mean(returns_log[-50:]):.0f}  best score: {float(best_return):.2f}")
     return params
 
 # ----- Main -----
@@ -150,7 +184,8 @@ def main():
     from mspacman_encoder import make_mspacman_encoder
     env = jaxatari.make("mspacman")
     enc = make_mspacman_encoder(env)
-    params = train(env, enc, epochs=EPOCHS)
+    model = None
+    params = train(env, enc, model, epochs=EPOCHS, )
 
 if __name__ == "__main__":
     main()
