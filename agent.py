@@ -153,6 +153,8 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
     avg_return = None
     returns_log = []
     best_return = 0
+    best_model = None
+    fsave = True
     start = time.time()
     for epoch in range(epochs):
         key, sub = jax.random.split(key)
@@ -167,13 +169,18 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             eta = per_epoch * (epochs - epoch - 1)
             print(f"epoch {epoch}  return {float(total_return):.0f}  avg {avg_return:.0f}  gnorm {float(gnorm):.2f}  [ETA {eta/60:.1f} min]")
 
-        if epoch % 100 == 0:
-            save_params(params, f"outputs/ckpt_epoch{epoch}.msgpack")
-
         if float(total_return) > best_return:
             best_return = float(total_return)
-            save_params(params, "outputs/mspacman_best.msgpack")
+            best_model = params
+            fsave = True
 
+        if epoch % 100 == 0:
+            save_params(params, f"outputs/ckpt_epoch{epoch}.msgpack")
+            if fsave : 
+                save_params(best_model, "outputs/mspacman_best.msgpack")
+                fsave = False
+
+    params = best_model
     save_params(params, "outputs/mspacman_params.msgpack")
     np.save("outputs/mspacman_returns.npy", np.array(returns_log))
     print(f"final return: {returns_log[-1]:.0f}  last_avgs: {np.mean(returns_log[-50:]):.0f}  best score: {float(best_return):.2f}")
