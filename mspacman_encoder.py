@@ -6,6 +6,7 @@ import chex
 
 DIR_TO_ACTION = 2
 DELTA = jnp.array([[0, -1], [1, 0], [-1, 0], [0, 1]])   # (up,right,left,down)->(dx,dy)
+LARGE_COST = 1e6
 
 def pos_to_grid(pos):
     """Snap function that maps grid position to pixel position.
@@ -34,9 +35,8 @@ def extract_features(obs, maze, walkable):
     """Per-cell features for the danger net. Returns (40, 44, 8)."""
     ax, ay = pos_to_grid(obs.player_position)
     agent_mask = jnp.zeros(walkable.shape, bool).at[ax, ay].set(True)
-    zero_danger = jnp.zeros(walkable.shape, jnp.float32)
-    dist = plan(maze, agent_mask, walkable, zero_danger)
-    dist = jnp.where(walkable, dist, -1.0)
+    dist = plan(maze, agent_mask, walkable)
+    dist = jnp.where((dist < LARGE_COST) & walkable, dist, -1.0)
 
     gx = (obs.ghost_positions[:, 0] + 5) // 4
     gy = (obs.ghost_positions[:, 1] + 3) // 4

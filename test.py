@@ -20,27 +20,16 @@ MAX_STEPS = 3000
 SEED = 0
 
 
-def greedy_action(V, maze, goal_mask, pos, prev_dir, snap):
-    """Deterministic descent: step to the legal neighbour with lowest value."""
-    gx, gy = snap(pos)
-    V_nbr = jnp.array([V[gx, gy - 1], V[gx + 1, gy], V[gx - 1, gy], V[gx, gy + 1]])
-    legal = maze[gx, gy]
-    V_nbr = jnp.where(legal, V_nbr, LARGE_COST)
-    tie = jnp.zeros(4).at[prev_dir].add(-1e-3)
-    d = jnp.argmin(V_nbr + tie).astype(jnp.int32)
-    d = jnp.where(goal_mask[gx, gy], prev_dir, d).astype(jnp.int32)   # coast on goal cell
-    return d + DIR_TO_ACTION, d
-
-
-def ghost_diagnostic(obs, danger, walkable, snap):
-    """Compare danger AT ghost cells vs the field average over walkable cells.
-    """  
-    field_mean = float(jnp.sum(danger * walkable) / jnp.sum(walkable))
-    ghost_vals = []
-    for g in obs.ghost_positions:
-        ggx, ggy = snap(g)
-        ghost_vals.append(round(float(danger[ggx, ggy]), 2))
-    return field_mean, ghost_vals
+# --- Hand Made Danger --- 
+def danger_field(ghost_cells, threat, shape=(40, 44), radius=4):
+    """Fixed-radius danger, high near ghosts, 0 beyond. threat: (n,) per-ghost weight."""
+    xs = jnp.arange(shape[0])[:, None, None]      # (W,1,1)
+    ys = jnp.arange(shape[1])[None, :, None]      # (1,H,1)
+    gx = ghost_cells[:, 0][None, None, :]         # (1,1,n)
+    gy = ghost_cells[:, 1][None, None, :]
+    dist = jnp.maximum(jnp.abs(xs - gx), jnp.abs(ys - gy))          # (W,H,n) box distance
+    contrib = jnp.where(dist <= radius, threat[None, None, :] * (1.0 - dist / (radius + 1)), 0.0)
+    return contrib.max(axis=-1)
 
 
 def run(env, enc, params, seed=SEED, max_steps=MAX_STEPS, render=True):
@@ -52,10 +41,12 @@ def run(env, enc, params, seed=SEED, max_steps=MAX_STEPS, render=True):
 
     @jax.jit
     def decide(obs, prev_dir):
-        danger = net.apply(params, features(obs, maze, walkable))
         goals = get_goal(obs, walkable, gx, gy)
-        V = plan(maze, goals, walkable, danger)
-        return greedy_action(V, maze, goals, obs.player_position, prev_dir, snap)
+        V_nav = plan(maze, goals, walkable, jnp.zeros(walkable.shape))  # danger=0 -> pure nav
+        ghost_cells = jnp.stack(snap(obs.ghost_positions.T), axis=-1)   # (n,2) ghost cells
+        threat = jnp.ones(obs.ghost_positions.shape[0]) * 50                # hand-set: all ghosts = 1
+        danger = danger_field(ghost_cells, threat)
+        return greedy_action(V_nav, danger, maze, goals, obs.player_position, prev_dir, snap)
 
     obs, state = env.reset(jax.random.PRNGKey(seed))
     prev_dir = jnp.int32(0)
@@ -95,6 +86,11 @@ def main():
     enc = make_mspacman_encoder(env, maze_id=MAZE_ID)
 
     obs, _ = env.reset(jax.random.PRNGKey(0))
+    assert enc.maze.shape[-1] == 4          # DOF
+    assert enc.walkable.shape == enc.maze.shape[:2]
+    assert callable(enc.snap) and callable(enc.goal) and callable(enc.features)
+    print("encoder contract OK")
+    return
     net = DangerNet()
     template = net.init(jax.random.PRNGKey(0), enc.features(obs, enc.maze, enc.walkable))
     params = load_params(template, MODEL_PATH)

@@ -6,16 +6,17 @@ import chex
 LARGE_COST = 1e6
 RELAX_IT = 128
 DIR_TO_ACTION = 2 #direction to action
+LAMBDA = 1.0 
 
 # ----- Navigation -----
-def plan(maze, goal_mask, walkable, danger):
-    """Value iteration maze solver. Move towards the lowest value.
+def plan(maze, goal_mask, walkable):
+    """Value iteration maze solver. The output is the distance to closest goal for each node.
     """    
     V_init = jnp.where(goal_mask, 0.0, LARGE_COST)
 
     @jax.checkpoint
     def relax(V, _):
-        step_cost = 1.0 + danger 
+        step_cost = 1.0 
         G = step_cost + V 
         up = jnp.roll(G, 1, axis=1)
         right = jnp.roll(G, -1, axis=0)
@@ -30,6 +31,24 @@ def plan(maze, goal_mask, walkable, danger):
     len_it = RELAX_IT
     V, _ = jax.lax.scan(relax, V_init, xs=None, length=len_it)
     return V
+
+
+def greedy_action(V, danger, maze, goal_mask, pos, prev_dir, snap, lam=LAMBDA):
+    """Descend navigation + LAMBDA*danger. Move to the closest pellet with the least danger.
+    """
+    gx, gy = snap(pos)
+    nav = jnp.array([V[gx, gy-1], V[gx+1, gy], V[gx-1, gy], V[gx, gy+1]]) 
+    dng = jnp.array([danger[gx, gy-1], danger[gx+1, gy], danger[gx-1, gy], danger[gx, gy+1]]) 
+    score = nav + LAMBDA * dng                    
+
+    legal = maze[gx, gy]
+    score = jnp.where(legal, score, LARGE_COST)
+    tie = jnp.zeros(4).at[prev_dir].add(-1e-3)
+    d = jnp.argmin(score + tie).astype(jnp.int32)
+    d = jnp.where(goal_mask[gx, gy], prev_dir, d).astype(jnp.int32) #coasting until we reach the pellet pixel
+    return d + DIR_TO_ACTION, d
+
+
 
 class GameEncoder(NamedTuple):
     # --- static data (computed once, per game) ---
