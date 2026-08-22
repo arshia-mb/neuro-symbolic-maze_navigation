@@ -11,3 +11,13 @@ Navigation and enemy avoidance are two different problems. Navigation on a known
 - `test.py` — for testing, debugging, and visualization. 
 
 The `*_encoder.py` files are encoder heads for each game the agent is tested or trained on. 
+
+## Demos
+
+Navigation only (no ghost avoidance):
+
+![navigation](outputs/navigation.gif)
+
+Two-field planner with danger avoidance:
+
+![danger avoidance](outputs/danger_avoidance.gif)
