@@ -1,11 +1,11 @@
 import jax 
-import jaxatari
 import jax.numpy as jnp
 from navigation import plan, GameEncoder
 import chex
 
 DIR_TO_ACTION = 2
-DELTA = jnp.array([[0, -1], [1, 0], [-1, 0], [0, 1]])   # (up,right,left,down)->(dx,dy)
+# (dx,dy) per action 0-5: NOOP, FIRE, UP, RIGHT, LEFT, DOWN
+ACTION_DELTA = jnp.array([[0,0], [0,0], [0,-1], [1,0], [-1,0], [0,1]])
 LARGE_COST = 1e6
 
 def pos_to_grid(pos):
@@ -42,8 +42,8 @@ def extract_features(obs, maze, walkable):
     gy = (obs.ghost_positions[:, 1] + 3) // 4
     occ = jnp.zeros(walkable.shape, jnp.float32).at[gx, gy].set(1.0)
 
-    dirs = obs.ghost_actions - DIR_TO_ACTION
-    vecs = DELTA[dirs].astype(jnp.float32)
+
+    vecs = ACTION_DELTA[obs.ghost_actions].astype(jnp.float32)
     vx = jnp.zeros(walkable.shape, jnp.float32).at[gx, gy].set(vecs[:, 0])
     vy = jnp.zeros(walkable.shape, jnp.float32).at[gx, gy].set(vecs[:, 1])
 

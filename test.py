@@ -92,6 +92,7 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
         return greedy_action(Vn, danger, maze, goals, obs.player_position, prev_dir, snap, lam)
 
     obs, state = env.reset(jax.random.PRNGKey(seed))
+    print("ghost_actions range:", int(obs.ghost_actions.min()), int(obs.ghost_actions.max()))
     prev_dir = jnp.int32(0)
     frames = [] if render else None
 
@@ -106,16 +107,17 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
     return int(state.score), frames
 
 def main():
+    #test environment and related game encoder head
     env = jaxatari.make("mspacman")
     enc = make_mspacman_encoder(env, maze_id=MAZE_ID)
- 
+
     # danger source - switch this for the test
     danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
  
     score, frames = run(env, enc, danger_fn, lam=LAMBDA, render=True)
     print(f"[test] maze={MAZE_ID}  lambda={LAMBDA}  threat={THREAT}  radius={RADIUS}")
     print(f"[test] score={score}  frames={len(frames)}")
-    #save_gif(frames, f"outputs/test_maze{MAZE_ID}.gif")
+    save_gif(frames, f"outputs/test_maze{MAZE_ID}.gif")
     #plot_curve()
  
 if __name__ == "__main__":
