@@ -18,8 +18,6 @@ MAX_STEPS = 3000
 SEED = 0
 LAMBDA = 1.0           
 
-
-
 # ----- Utility -----
 def save_gif(frames, path, fps=30):
     try:

@@ -1,8 +1,6 @@
 """
 Neuro-symbolic agent for solving mazes with enemy avoidance: learned danger field + symbolic planner.
 """
-
-import chex
 import os
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.9"      # use more of the 6GB (default holds back)
 os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"    # on-demand alloc, less fragmentation
@@ -24,8 +22,6 @@ EPOCHS = 300
 N_ENV = 6
 DANGER_MAX = 10
 DEATH_PENALTY = 50
-
-
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
