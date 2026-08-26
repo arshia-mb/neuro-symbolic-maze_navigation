@@ -10,8 +10,8 @@ import jaxatari
 import numpy as np
 import matplotlib.pyplot as plt
 
-from navigation import plan, greedy_action
-from mspacman_encoder import make_mspacman_encoder
+from projects.maze_solver.src.navigation import plan, greedy_action
+from projects.maze_solver.src.mspacman_encoder import make_mspacman_encoder
 
 MAZE_ID = 0
 MAX_STEPS = 3000
@@ -78,7 +78,7 @@ def handcrafted_danger(snap, threat=THREAT):
 
 # --- Danger fn ---
 def make_net_danger_fn(env, enc, model_path):
-    from agent_MF import DangerNet, load_params 
+    from projects.maze_solver.src.agent_MF import DangerNet, load_params 
     net = DangerNet()
     obs, _ = env.reset(jax.random.PRNGKey(0))   # you have obs already in main
     template = net.init(jax.random.PRNGKey(0), enc.features(obs, enc.maze, enc.walkable))

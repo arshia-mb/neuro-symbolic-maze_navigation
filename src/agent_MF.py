@@ -17,7 +17,7 @@ import time
 LARGE_COST = 1e6
 DIR_TO_ACTION = 2 #direction to action
 MAX_EPISODE_LEN = 800
-EPOCHS = 1000
+EPOCHS = 350
 N_ENV = 8
 DANGER_MAX = 10.8
 DEATH_PENALTY = 50.0
@@ -144,7 +144,6 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             # Death Penalty 
             lives = state.lives
             died = (lives < prev_lives).astype(jnp.float32)
-
             
             reward = reward - DEATH_PENALTY * died - DANGER_WEIGHT * prox_penalty
 
@@ -207,7 +206,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
 
 # ----- Main -----
 def main():
-    from mspacman_encoder import make_mspacman_encoder
+    from projects.maze_solver.src.mspacman_encoder import make_mspacman_encoder
     env = jaxatari.make("mspacman")
     enc = make_mspacman_encoder(env)
     model = None

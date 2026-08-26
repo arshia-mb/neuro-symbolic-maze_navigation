@@ -1,6 +1,6 @@
 import jax 
 import jax.numpy as jnp
-from navigation import plan, GameEncoder
+from projects.maze_solver.src.navigation import plan, GameEncoder
 import chex
 
 DIR_TO_ACTION = 2
