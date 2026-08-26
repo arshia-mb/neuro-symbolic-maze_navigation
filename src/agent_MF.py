@@ -19,11 +19,15 @@ DIR_TO_ACTION = 2 #direction to action
 MAX_EPISODE_LEN = 800
 EPOCHS = 350
 N_ENV = 8
-DANGER_MAX = 10.8
+DANGER_MAX = 10.0
 DEATH_PENALTY = 50.0
 DANGER_WEIGHT = 0.05
 DANGER_RADIUS = 4
 LAMBDA = 4.0
+
+STALL_WINDOW = 6
+STALL_DISTINCT = 2
+STALL_PENALTY = 0.5
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
@@ -103,6 +107,8 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
     get_goal = game_encoder.goal
     features = game_encoder.features
 
+    W = walkable.shape[1]
+
     net = DangerNet()
     dummy = features(obs, maze, walkable)
     if model_path:
@@ -117,12 +123,13 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
         reset_key, key = jax.random.split(key)
         obs, state = env.reset(reset_key)
         prev_dir = jnp.int32(0)
-        init_carry = (state, obs, prev_dir, state.lives, key)
+        cell_buffer = jnp.arange(STALL_WINDOW, dtype=jnp.int32) - STALL_WINDOW
+        init_carry = (state, obs, prev_dir, state.lives, cell_buffer, key)
 
         def step(carry, _):
             """Running one step of the game with fixed length.
             """
-            state, obs, prev_dir, prev_lives, key = carry
+            state, obs, prev_dir, prev_lives, cell_buf, key = carry
             key, act_key = jax.random.split(key)
 
             danger = net.apply(params, features(obs, maze, walkable))
@@ -141,13 +148,20 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             nearest = jnp.min(dist[ggx, ggy])
             prox_penalty = jnp.maximum(DANGER_RADIUS - nearest, 0.0)
 
+            #Anti-camping Penalty
+            cell_id = (pgx * W + pgy).astype(jnp.int32)
+            cell_buf = jnp.concatenate([cell_buf[1:], cell_id[None]])
+            is_first = jnp.array([~jnp.any(cell_buf[:i] == cell_buf[i]) for i in range(STALL_WINDOW)])
+            distinct = is_first.sum()
+            camping = (distinct <= STALL_DISTINCT).astype(jnp.float32)
+
             # Death Penalty 
             lives = state.lives
             died = (lives < prev_lives).astype(jnp.float32)
             
-            reward = reward - DEATH_PENALTY * died - DANGER_WEIGHT * prox_penalty
+            reward = reward - DEATH_PENALTY * died - DANGER_WEIGHT * prox_penalty - STALL_PENALTY * camping
 
-            new_carry = (state, obs, prev_dir, lives, key)
+            new_carry = (state, obs, prev_dir, lives, cell_buf, key)
             output = (logp, reward, done)
             return new_carry, output
 
@@ -206,7 +220,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
 
 # ----- Main -----
 def main():
-    from projects.maze_solver.src.mspacman_encoder import make_mspacman_encoder
+    from mspacman_encoder import make_mspacman_encoder
     env = jaxatari.make("mspacman")
     enc = make_mspacman_encoder(env)
     model = None
