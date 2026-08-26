@@ -14,7 +14,6 @@ def plan(maze, goal_mask, walkable):
     """    
     V_init = jnp.where(goal_mask, 0.0, LARGE_COST)
 
-    @jax.checkpoint
     def relax(V, _):
         step_cost = 1.0 
         G = step_cost + V 
@@ -38,7 +37,7 @@ def greedy_action(V, danger, maze, goal_mask, pos, prev_dir, snap, lam=LAMBDA):
     gx, gy = snap(pos)
     nav = jnp.array([V[gx, gy-1], V[gx+1, gy], V[gx-1, gy], V[gx, gy+1]]) 
     dng = jnp.array([danger[gx, gy-1], danger[gx+1, gy], danger[gx-1, gy], danger[gx, gy+1]]) 
-    score = nav + LAMBDA * dng                    
+    score = nav + lam * dng                    
     legal = maze[gx, gy]
     score = jnp.where(legal, score, LARGE_COST)
 

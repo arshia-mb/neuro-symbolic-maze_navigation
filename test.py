@@ -16,7 +16,8 @@ from mspacman_encoder import make_mspacman_encoder
 MAZE_ID = 0
 MAX_STEPS = 3000
 SEED = 0
-LAMBDA = 1.0           
+LAMBDA = 4.0     
+LARGE_COST = 1e6     
 
 # ----- Utility -----
 def save_gif(frames, path, fps=30):
@@ -75,28 +76,71 @@ def handcrafted_danger(snap, threat=THREAT):
         return danger_field(ghost_cells, threats)
     return danger_fn
 
+# --- Danger fn ---
+def make_net_danger_fn(env, enc, model_path):
+    from agent_MF import DangerNet, load_params 
+    net = DangerNet()
+    obs, _ = env.reset(jax.random.PRNGKey(0))   # you have obs already in main
+    template = net.init(jax.random.PRNGKey(0), enc.features(obs, enc.maze, enc.walkable))
+    params = load_params(template, model_path)
+    def danger_fn(obs):
+        return net.apply(params, enc.features(obs, enc.maze, enc.walkable))
+    return danger_fn
+
 # --- Game Test ---
+def debug(walkable, maze, snap, obs, V_nav, danger, dist):
+    gxp, gyp = snap(obs.player_position) 
+    agent_mask = jnp.zeros(walkable.shape, bool).at[gxp,gyp].set(True)
+    dist = plan(maze, agent_mask, walkable)
+
+    gpos = obs.ghost_positions
+    ggx = (gpos[:, 0] + 5) // 4
+    ggy = (gpos[:, 1] + 3) // 4
+    dist = [float(dist[int(ggx[i]), int(ggy[i])]) for i in range(gpos.shape[0])]
+    nav_nbr = [float(V_nav[gxp, gyp-1]), float(V_nav[gxp+1, gyp]), float(V_nav[gxp-1, gyp]), float(V_nav[gxp, gyp+1])]
+    dng_nbr = [float(danger[gxp, gyp-1]), float(danger[gxp+1, gyp]), float(danger[gxp-1, gyp]), float(danger[gxp, gyp+1])]
+    # nearest ghost distance
+    print(f"t={t}  ghost_nav_dist={[round(d,1) for d in dist]}")
+    print(f"  nav   : {[round(n,1) for n in nav_nbr]}")
+    print(f"  dng   : {[round(d,2) for d in dng_nbr]}")
+
+
 def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=True):
-    """Play one greedy episode with the two-field planner. Returns (score, frames)."""
     maze, walkable = enc.maze, enc.walkable
-    gx, gy = enc.gx, enc.gy
-    snap, get_goal, features = enc.snap, enc.goal, enc.features
-    
+    gx, gy = enc.gx, enc.gy 
+    snap, get_goal = enc.snap, enc.goal
+
     @jax.jit
     def decide(obs, prev_dir):
         goals = get_goal(obs, walkable, gx, gy)
-        Vn = plan(maze, goals, walkable)                       
-        danger = danger_fn(obs)                                    # pluggable danger source
-        return greedy_action(Vn, danger, maze, goals, obs.player_position, prev_dir, snap, lam)
+        V_nav = plan(maze, goals, walkable)
+        danger = danger_fn(obs)
+        action, d = greedy_action(V_nav, danger, maze, goals, obs.player_position, prev_dir, snap, lam)
+        return action, d, V_nav, danger      # return the fields for debugging
 
     obs, state = env.reset(jax.random.PRNGKey(seed))
-    print("ghost_actions range:", int(obs.ghost_actions.min()), int(obs.ghost_actions.max()))
     prev_dir = jnp.int32(0)
     frames = [] if render else None
 
+    stuck_count = 0
+    last_cell = None
     for t in range(max_steps):
-        action, prev_dir = decide(obs, prev_dir)
+        action, prev_dir, V_nav, danger = decide(obs, prev_dir)
+
+        #stuck fix!
+        cell = tuple(int(c) for c in snap(obs.player_position))
+        if cell == last_cell:
+            stuck_count += 1
+        else:
+            stuck_count = 0
+        last_cell = cell
+        if stuck_count > 3:
+            goals = get_goal(obs, walkable, gx, gy)
+            action, prev_dir = greedy_action(V_nav, jnp.zeros_like(danger), maze, goals, obs.player_position, prev_dir, snap, 0.0)
+            stuck_count = 0
+
         obs, state, reward, done, info = env.step(state, action)
+
         if render:
             frames.append(np.asarray(env.render(state), dtype=np.uint8))
         if bool(done):
@@ -110,13 +154,14 @@ def main():
     enc = make_mspacman_encoder(env, maze_id=MAZE_ID)
 
     # danger source - switch this for the test
-    danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
+    #danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
+    danger_fn = make_net_danger_fn(env, enc, "outputs/mspacman_params.msgpack")
  
     score, frames = run(env, enc, danger_fn, lam=LAMBDA, render=True)
     print(f"[test] maze={MAZE_ID}  lambda={LAMBDA}  threat={THREAT}  radius={RADIUS}")
     print(f"[test] score={score}  frames={len(frames)}")
-    save_gif(frames, f"outputs/test_maze{MAZE_ID}.gif")
-    #plot_curve()
+    save_gif(frames, f"outputs/test_new_reward_2.gif")
+    plot_curve()
  
 if __name__ == "__main__":
     main()

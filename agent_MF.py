@@ -12,16 +12,18 @@ import flax.serialization as fs
 import optax
 from navigation import plan
 import numpy as np
-#from jax.flatten_util import ravel_pytree
 import time
 
 LARGE_COST = 1e6
 DIR_TO_ACTION = 2 #direction to action
 MAX_EPISODE_LEN = 800
-EPOCHS = 300
-N_ENV = 6
-DANGER_MAX = 10
-DEATH_PENALTY = 50
+EPOCHS = 1000
+N_ENV = 8
+DANGER_MAX = 10.8
+DEATH_PENALTY = 50.0
+DANGER_WEIGHT = 0.05
+DANGER_RADIUS = 4
+LAMBDA = 4.0
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
@@ -37,20 +39,22 @@ class DangerNet(nn.Module):
         x = nn.Conv(1, (1,1), padding="SAME")(x)
         return jax.nn.sigmoid(x[..., 0]) * DANGER_MAX
 
-def policy(V, maze, goal_mask, pos, prev_dir, key, snap, temperature=1.0):
+def policy(V, danger, maze, goal_mask, pos, prev_dir, key, snap, temperature=1.0):
     """Stochastic, differentiable policy.
     """
     gx, gy = snap(pos)
     V_nbr = jnp.array([V[gx, gy - 1], V[gx + 1, gy], V[gx - 1, gy], V[gx, gy + 1]])
+    dng_nbr = jnp.array([danger[gx, gy - 1], danger[gx + 1, gy], danger[gx - 1, gy], danger[gx, gy + 1]])
+    score = V_nbr + LAMBDA * dng_nbr
 
     legal = maze[gx, gy]
-    logits = -V_nbr / temperature
+    logits = -score / temperature
     logits = jnp.where(legal, logits, -1e9)
 
     d = jax.random.categorical(key, logits)
     logp = jax.nn.log_softmax(logits)[d]
 
-    d = jnp.where(goal_mask[gx, gy], prev_dir, d).astype(jnp.int32)   # coast on goal cell
+    d = jnp.where(goal_mask[gx, gy], prev_dir, d)
     return d + DIR_TO_ACTION, logp, d
 
 
@@ -120,20 +124,32 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             """
             state, obs, prev_dir, prev_lives, key = carry
             key, act_key = jax.random.split(key)
+
             danger = net.apply(params, features(obs, maze, walkable))
             goals = get_goal(obs, walkable, gx, gy)
-            V = plan(maze, goals, walkable, danger)
-            action, logp, prev_dir = policy(V, maze, goals, obs.player_position, prev_dir, act_key, snap)
-
+            V = jax.lax.stop_gradient(plan(maze, goals, walkable))  
+            action, logp, prev_dir = policy(V, danger, maze, goals, obs.player_position, prev_dir, act_key, snap)
+           
             obs, state, reward, done, _ = env.step(state, action)
 
+            # Ghost-Proximity Penalty
+            pgx, pgy = snap(obs.player_position)                    
+            agent_mask = jnp.zeros(walkable.shape, bool).at[pgx, pgy].set(True)
+            dist = jax.lax.stop_gradient(plan(maze, agent_mask, walkable))
+            ggx = (obs.ghost_positions[:, 0] + 5) // 4             
+            ggy = (obs.ghost_positions[:, 1] + 3) // 4
+            nearest = jnp.min(dist[ggx, ggy])
+            prox_penalty = jnp.maximum(DANGER_RADIUS - nearest, 0.0)
+
+            # Death Penalty 
             lives = state.lives
             died = (lives < prev_lives).astype(jnp.float32)
-            reward = reward - DEATH_PENALTY * died
+
+            
+            reward = reward - DEATH_PENALTY * died - DANGER_WEIGHT * prox_penalty
 
             new_carry = (state, obs, prev_dir, lives, key)
             output = (logp, reward, done)
-
             return new_carry, output
 
         final_carry, (logps, rewards, dones) = jax.lax.scan(step, init_carry, xs=None, length=episode_len)
@@ -155,7 +171,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
 
     avg_return = None
     returns_log = []
-    best_return = 0
+    best_return = -1e9
     best_model = None
     fsave = True
     start = time.time()
@@ -179,7 +195,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
 
         if epoch % 100 == 0:
             save_params(params, f"outputs/ckpt_epoch{epoch}.msgpack")
-            if fsave : 
+            if fsave and best_model is not None:      # <-- guard
                 save_params(best_model, "outputs/mspacman_best.msgpack")
                 fsave = False
 
