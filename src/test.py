@@ -64,6 +64,28 @@ def save_danger_heatmap(danger, obs, snap, t, save_dir="outputs/debug_frames"):
     plt.savefig(f"{save_dir}/danger_t{t:04d}.png", dpi=80)
     plt.close()
 
+def danger_heatmap_frame(danger, obs, snap, t):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    d = np.asarray(danger)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(d.T, origin="upper", cmap="hot", vmin=0, vmax=10)   # fixed scale!
+    plt.colorbar(im, ax=ax, label="danger")
+    gxp, gyp = snap(obs.player_position)
+    ax.plot(int(gxp), int(gyp), "co", markersize=8)
+    for g in obs.ghost_positions:
+        ggx = int((g[0] + 5) // 4); ggy = int((g[1] + 3) // 4)
+        ax.plot(ggx, ggy, "b+", markersize=10)
+    ax.set_title(f"danger t={t}")
+
+    fig.canvas.draw()
+    frame = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+    frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (4,))[..., :3]  # drop alpha
+    plt.close(fig)
+    return frame
+
 # --- Hand Crafted Danger --- 
 THREAT = 50.0          # handcrafted per-ghost threat magnitude
 RADIUS = 4             # handcrafted danger radius (cells)
@@ -167,17 +189,19 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
 
         obs, state, reward, done, info = env.step(state, action)
 
+        """
         if (t%100 == 0):
             #audit_features(enc, state, obs, maze, walkable, snap)
             debug(walkable, maze, snap, obs, state, env, V_nav, danger, t)
             save_danger_heatmap(danger,obs,snap,t)
+        """
 
         if render:
             frames.append(np.asarray(env.render(state), dtype=np.uint8))
         if bool(done):
             break
 
-    return int(state.score), frames
+    return int(state.score), frames, heatmap
 
 # --- Danger fn ---
 def make_net_danger_fn(env, enc, model_path):
@@ -198,14 +222,14 @@ def main():
 
     # danger source - switch this for the test
     #danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
-    danger_fn = make_net_danger_fn(env, enc, "outputs/mspacman_best.msgpack")
+    danger_fn = make_net_danger_fn(env, enc, "outputs/weights/mspacman_v4.msgpack")
  
     score, frames, heatmap = run(env, enc, danger_fn, lam=LAMBDA, render=True)
     print(f"[test] maze={MAZE_ID}  lambda={LAMBDA}")
     print(f"[test] score={score}  frames={len(frames)}")
     save_gif(frames, f"outputs/debug_4.gif")
-    save_gif(heatmap, f"outputs/heatmap_4.gif")
-    plot_curve()
+    save_gif(heatmap, f"outputs/heatmap_4.gif", fps=15)
+    #plot_curve()
  
 if __name__ == "__main__":
     main()
