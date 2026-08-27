@@ -41,7 +41,7 @@ def extract_features(state, obs, maze, walkable):
     #ghost distance
     gx = (obs.ghost_positions[:, 0] + 5) // 4
     gy = (obs.ghost_positions[:, 1] + 3) // 4
-    dangerous = state.ghosts.modes < 2  
+    dangerous = state.ghosts.modes < 3  
     ghost_mask = jnp.zeros(walkable.shape, bool).at[gx, gy].set(dangerous)
     ghosts = plan(maze, ghost_mask, walkable)
     ghosts = jnp.where((ghosts < LARGE_COST) & walkable, ghosts, -1.0)

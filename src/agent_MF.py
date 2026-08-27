@@ -21,13 +21,15 @@ DIR_TO_ACTION = 2 #direction to action
 MAX_EPISODE_LEN = 800
 EPOCHS = 300
 N_ENV = 8
+MAX_WARMUP = 60
 
 DANGER_MAX = 10.0
+LAMBDA = 8.0
 
 DEATH_PENALTY = 50.0
 DANGER_WEIGHT = 0.05
-DANGER_RADIUS = 4
-LAMBDA = 4.0
+DANGER_RADIUS = 10
+
 
 # ----- DangerNet -----
 class DangerNet(nn.Module):
@@ -118,8 +120,26 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
     opt_state = optimizer.init(params)
 
     def episode_loss(params,key):
-        reset_key, key = jax.random.split(key)
+        reset_key, noop_key, warmup_key, key = jax.random.split(key, 4)
         obs, state = env.reset(reset_key)
+        
+
+        n_warmup = jax.random.randint(noop_key, (), 0, MAX_WARMUP)
+
+        #Random Start
+        def warmup_step(carry, i):
+            obs, state, key = carry
+            key, action_key = jax.random.split(key)
+            action = jax.random.randint(action_key, (), 0, 6) #random-atari action
+            obs_n, state_n, _, done_n, _ = env.step(state, action)
+
+            warmup = (i < n_warmup) & (~done_n)
+            obs   = jax.tree_util.tree_map(lambda new, old: jnp.where(warmup, new, old), obs_n, obs)
+            state = jax.tree_util.tree_map(lambda new, old: jnp.where(warmup, new, old), state_n, state)
+            return (obs, state, key), None
+
+        (obs, state, _), _ = jax.lax.scan(warmup_step, (obs, state, warmup_key), jnp.arange(MAX_WARMUP))
+
         prev_dir = jnp.int32(0)
         init_carry = (state, obs, prev_dir, state.lives, key)
 
@@ -202,7 +222,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
                 save_params(best_model, "outputs/mspacman_best.msgpack")
                 fsave = False
 
-    params = best_model
+    params = best_model if best_model is not None else params
     save_params(params, "outputs/mspacman_params.msgpack")
     np.save("outputs/mspacman_returns.npy", np.array(returns_log))
     print(f"final return: {returns_log[-1]:.0f}  last_avgs: {np.mean(returns_log[-50:]):.0f}  best score: {float(best_return):.2f}")
