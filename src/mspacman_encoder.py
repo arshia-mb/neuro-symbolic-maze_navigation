@@ -30,24 +30,29 @@ def get_goals(obs: chex.Array, walkable: chex.Array, gx: chex.Array, gy: chex.Ar
     mask = mask.at[gx, gy].set(obs.pellets.astype(jnp.bool_))
     return mask & walkable
 
-
-def extract_features(obs, maze, walkable):
+def extract_features(state, obs, maze, walkable):
     """Per-cell features for the danger net. Returns (40, 44, 8)."""
+    #agent pos and distance
     ax, ay = pos_to_grid(obs.player_position)
     agent_mask = jnp.zeros(walkable.shape, bool).at[ax, ay].set(True)
     dist = plan(maze, agent_mask, walkable)
     dist = jnp.where((dist < LARGE_COST) & walkable, dist, -1.0)
 
+    #ghost distance
     gx = (obs.ghost_positions[:, 0] + 5) // 4
     gy = (obs.ghost_positions[:, 1] + 3) // 4
-    occ = jnp.zeros(walkable.shape, jnp.float32).at[gx, gy].set(1.0)
+    dangerous = state.ghosts.modes < 2  
+    ghost_mask = jnp.zeros(walkable.shape, bool).at[gx, gy].set(dangerous)
+    ghosts = plan(maze, ghost_mask, walkable)
+    ghosts = jnp.where((ghosts < LARGE_COST) & walkable, ghosts, -1.0)
 
-
+    #ghost direction
     vecs = ACTION_DELTA[obs.ghost_actions].astype(jnp.float32)
     vx = jnp.zeros(walkable.shape, jnp.float32).at[gx, gy].set(vecs[:, 0])
     vy = jnp.zeros(walkable.shape, jnp.float32).at[gx, gy].set(vecs[:, 1])
 
-    scalar = jnp.stack([dist.astype(jnp.float32), occ, vx, vy], axis=-1)
+    scalar = jnp.stack([dist.astype(jnp.float32), ghosts, vx, vy], axis=-1)
+
     return jnp.concatenate([maze.astype(jnp.float32), scalar], axis=-1)
 
 def make_mspacman_encoder(env: chex.Array, maze_id=0) -> GameEncoder:
