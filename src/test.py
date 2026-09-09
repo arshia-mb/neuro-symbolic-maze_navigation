@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 from navigation import plan, greedy_action
 from mspacman_encoder import make_mspacman_encoder
 
-MAZE_ID = 0
 MAX_STEPS = 3000
 SEED = 0
 LAMBDA = 8.0   
@@ -183,6 +182,7 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
     prev_dir = jnp.int32(0)
     frames = [] if render else None
     heatmap = [] if render else None
+    print(f"[debug] initial state: score={state.score}  lives={state.lives}")
 
     for t in range(max_steps):
         action, prev_dir, V_nav, danger = decide(obs, state, prev_dir)
@@ -215,21 +215,34 @@ def make_net_danger_fn(env, enc, model_path):
     return danger_fn
 
 # --- Main ---
-def main():
+def main(maze_id=0, render=True, seed=0):
     #test environment and related game encoder head
+
     env = jaxatari.make("mspacman")
-    enc = make_mspacman_encoder(env, maze_id=MAZE_ID)
+    env.consts = env.consts.replace(RESET_LEVEL=1 + 2 * maze_id)
+
+    enc = make_mspacman_encoder(env, maze_id=maze_id)
 
     # danger source - switch this for the test
     #danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
     danger_fn = make_net_danger_fn(env, enc, "outputs/weights/mspacman_v4.msgpack")
- 
-    score, frames, heatmap = run(env, enc, danger_fn, lam=LAMBDA, render=True)
-    print(f"[test] maze={MAZE_ID}  lambda={LAMBDA}")
+
+    scores = []
+    score, frames, heatmap = run(env, enc, danger_fn, lam=LAMBDA, seed=seed)
+    print(f"[test] lambda={LAMBDA}")
     print(f"[test] score={score}  frames={len(frames)}")
-    save_gif(frames, f"outputs/debug_4.gif")
-    save_gif(heatmap, f"outputs/heatmap_4.gif", fps=15)
+    if render:
+        save_gif(frames, f"gifs/mspacman_{maze_id}_{seed}.gif")
+        save_gif(heatmap, f"gifs/heatmap_mspacman_{maze_id}_{seed}.gif", fps=15)
+    scores.append(score)
+    #print(f"[test] maze {maze_id}  mean score={np.mean(scores):.1f}  std={np.std(scores):.1f}")
     #plot_curve()
  
 if __name__ == "__main__":
-    main()
+    for maze_id in range(4):
+        for seed in range(4):
+            try:
+                print(f"\n=== TEST MAZE {maze_id}, SEED {seed} ===")
+                main(maze_id=maze_id, seed=seed)
+            except Exception as e:
+                print(f"Error occurred: {e}")

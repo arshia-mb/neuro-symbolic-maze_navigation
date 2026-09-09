@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from navigation import plan, GameEncoder
 import chex
+from jaxatari.games.jax_mspacman import get_level_maze
 
 DIR_TO_ACTION = 2
 # (dx,dy) per action 0-5: NOOP, FIRE, UP, RIGHT, LEFT, DOWN
@@ -55,14 +56,15 @@ def extract_features(state, obs, maze, walkable):
 
     return jnp.concatenate([maze.astype(jnp.float32), scalar], axis=-1)
 
-def make_mspacman_encoder(env: chex.Array, maze_id=0) -> GameEncoder:
+def make_mspacman_encoder(env: chex.Array, maze_id=None) -> GameEncoder:
     """Create game encoder interface for agent to use
     """
+    # precompute goal indices once (needs a sample obs for the pellet shape)
+    obs, state = env.reset(jax.random.PRNGKey(0))
+    if maze_id is None:
+        maze_id = get_level_maze(state.level.id)
     maze = env.consts.DOF_MAZES[maze_id]
     walkable = maze.any(axis=-1)
-
-    # precompute goal indices once (needs a sample obs for the pellet shape)
-    obs, _ = env.reset(jax.random.PRNGKey(0))
     gx, gy = pellet_indices(obs.pellets)      # your existing function
 
     return GameEncoder(
