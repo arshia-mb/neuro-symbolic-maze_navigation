@@ -1,4 +1,4 @@
-# Neuro-Symbolic Ms. Pac-Man
+# Neuro-Symbolic Ms. Pac-Man & Bankheist
 
 A neuro-symbolic agent for maze navigation with enemy avoidance in [JAXAtari](https://github.com/k4ntz/JAXAtari), as part of the Practical AI lab for summer 2026 at TU Darmstadt.
 
