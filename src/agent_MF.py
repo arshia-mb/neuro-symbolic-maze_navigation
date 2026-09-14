@@ -10,7 +10,7 @@ import jaxatari
 import flax.linen as nn
 import flax.serialization as fs
 import optax
-from navigation import plan
+from .mspacman.msp_nav import plan
 import numpy as np
 import time
 
@@ -230,9 +230,9 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
 
 # ----- Main -----
 def main():
-    from mspacman_encoder import make_mspacman_encoder
+    from mspacman.mspacman_encoder import make_mspacman_encoder
     env = jaxatari.make("mspacman")
-    enc = make_mspacman_encoder(env)
+    enc = make_mspacman_encoder(env, maze_id=0)
     model = None
     params = train(env, enc, model, epochs=EPOCHS, )
 

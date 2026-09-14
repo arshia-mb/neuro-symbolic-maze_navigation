@@ -22,6 +22,24 @@ For each game to be tested or trained on the net an encoder head is needed:
 
 `legacy/` holds earlier single-field versions kept for reference. `examples/gifs/` holds demo GIFs (navigation, danger avoidance, the reward-hack failure, etc.).  `outputs/` holds trained weights and training curves.
 
+## Instructions
+**Linux**
+
+To run any python file or tests in this project. Please use `run.sh` followed by the file path you wish to run. like so:
+```bash
+run.sh src/bankheist/test_bankheist.py
+```
+- Note: the file path must be relative to the project main directory. (i.e.: `neuro-symbolic-maze_navigation`)
+
+
+**Other**
+
+If you are using Windows or any OS other than linux: You can manually execute the files using the following command:
+```bash
+python -m {PARENT FOLDER}.{FILE}    #do not include file endings
+```
+- Note: Please be mindful that the file pathing must be seperated or directed by "." (dots) and not "/" (slashes). 
+
 ## Environment note (WSL + CUDA)
 
 If convolutions throw `CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH`, remove stray CUDA-13 packages and realign JAX's CUDA stack:
