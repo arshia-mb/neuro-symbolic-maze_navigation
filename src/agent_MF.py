@@ -230,7 +230,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
 
 # ----- Main -----
 def main():
-    from mspacman_encoder import make_mspacman_encoder
+    from encoders.mspacman_encoder import make_mspacman_encoder
     env = jaxatari.make("mspacman")
     enc = make_mspacman_encoder(env)
     model = None

@@ -12,8 +12,8 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 from navigation import plan, greedy_action
-from mspacman_encoder import make_mspacman_encoder
-from pacman_encoder import make_pacman_encoder
+from encoders.mspacman_encoder import make_mspacman_encoder
+from encoders.pacman_encoder import make_pacman_encoder
 
 MAX_STEPS = 3000
 SEED = 0
@@ -89,12 +89,8 @@ def danger_heatmap_frame(danger, obs, snap, t):
 # --- Hand Crafted Danger --- 
 THREAT = 50.0          # handcrafted per-ghost threat magnitude
 RADIUS = 4             # handcrafted danger radius (cells)
-def danger_field(ghost_cells, threat, shape=(40, 44), radius=RADIUS):
-    """Fixed-radius danger, high near ghosts, fading to 0 at the radius edge.
- 
-    ghost_cells -- (n, 2) int ghost cells
-    threat      -- (n,) per-ghost weight
-    returns     -- (shape) danger field
+def danger_field(ghost_cells, threat, shape, radius=RADIUS):
+    """Fixed-radius danger, high near enemy, fading to 0 at the radius edge.
     """
     xs = jnp.arange(shape[0])[:, None, None]
     ys = jnp.arange(shape[1])[None, :, None]
@@ -105,16 +101,17 @@ def danger_field(ghost_cells, threat, shape=(40, 44), radius=RADIUS):
                         threat[None, None, :] * (1.0 - dist / (radius + 1)),
                         0.0)
     return contrib.max(axis=-1)                                     # strongest ghost per cell
- 
-def handcrafted_danger(snap, threat=THREAT):
-    """Build danger_fn(obs) -> (H,W) using the handcrafted radius field."""
-    def danger_fn(obs):
+
+def handcrafted_danger(snap, shape, threat=THREAT):
+    """Build danger_fn(obs) -> (H,W) using the handcrafted radius field.
+    """
+    def danger_fn(obs, state=None):
         gpos = obs.ghost_positions
         ggx = (gpos[:, 0] + 5) // 4
         ggy = (gpos[:, 1] + 3) // 4
-        ghost_cells = jnp.stack([ggx, ggy], axis=-1)               # (n, 2)
+        ghost_cells = jnp.stack([ggx, ggy], axis=-1)
         threats = jnp.ones(gpos.shape[0]) * threat
-        return danger_field(ghost_cells, threats)
+        return danger_field(ghost_cells, threats, shape=shape)
     return danger_fn
 
 # ----- Debug -----
@@ -143,28 +140,6 @@ def debug(walkable, maze, snap, obs, state, env, V_nav, danger, t, save_dir="out
     except ImportError:
         pass
 
-def audit_features(enc, state, obs, maze, walkable, snap):
-    f = enc.features(state, obs, maze, walkable)
-    print("feature shape:", f.shape, "  nan:", bool(jnp.isnan(f).any()), "  inf:", bool(jnp.isinf(f).any()))
-
-    names = ["DOF up", "DOF right", "DOF left", "DOF down", "dist-to-pac", "ghost occ", "ghost dx", "ghost dy"]
-    for c in range(f.shape[-1]):
-        ch = f[..., c]
-        print(f"ch{c} {names[c]:14s}: min {float(ch.min()):8.2f}  max {float(ch.max()):8.2f} mean {float(ch.mean()):6.2f}  nonzero {int((ch != 0).sum())}")
-
-    # cross-checks:
-    gpos = obs.ghost_positions
-    ggx = (gpos[:, 0] + 5) // 4
-    ggy = (gpos[:, 1] + 3) // 4
-    print("\n-- ghost cross-check --")
-    print("ghost cells:", [(int(ggx[i]), int(ggy[i])) for i in range(gpos.shape[0])])
-    occ = f[..., 5]
-    print("occ sum:", float(occ.sum()), "(should ≈ #distinct ghost cells)")
-    for i in range(gpos.shape[0]):
-        gx_, gy_ = int(ggx[i]), int(ggy[i])
-        print(f"  ghost {i} at ({gx_},{gy_}): occ={float(occ[gx_,gy_])}  "
-              f"dx={float(f[gx_,gy_,6])}  dy={float(f[gx_,gy_,7])}")
-
 # --- Game Test ---   
 def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=True):
     maze, walkable = enc.maze, enc.walkable
@@ -187,22 +162,47 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
 
     for t in range(max_steps):
         action, prev_dir, V_nav, danger = decide(obs, state, prev_dir)
-
         obs, state, reward, done, info = env.step(state, action)
-
-        """
-        if (t%100 == 0):
-            #audit_features(enc, state, obs, maze, walkable, snap)
-            debug(walkable, maze, snap, obs, state, env, V_nav, danger, t)
-            save_danger_heatmap(danger,obs,snap,t)
-        """
-
         if render:
             frames.append(np.asarray(env.render(state), dtype=np.uint8))
+        if render and t % 2 == 0:              # every 2nd step, keep GIF size sane
+            heatmap.append(danger_heatmap_frame(danger, obs, snap, t))
         if bool(done):
             break
 
     return int(state.score), frames, heatmap
+
+def run_batch(env, enc, danger_fn, seeds, lam=LAMBDA, max_steps=MAX_STEPS):
+    """Vectorized eval over many seeds. Returns per-seed final score. No rendering."""
+    maze, walkable = enc.maze, enc.walkable
+    gx, gy = enc.gx, enc.gy
+    snap, get_goal = enc.snap, enc.goal
+
+    @jax.jit
+    def episode(seed):
+        obs, state = env.reset(jax.random.PRNGKey(seed))
+        prev_dir = jnp.int32(0)
+        init_carry = (obs, state, prev_dir)
+
+        def step(carry, _):
+            obs, state, prev_dir = carry
+            goals = get_goal(obs, walkable, gx, gy)
+            V_nav = plan(maze, goals, walkable)
+            danger = danger_fn(obs, state)
+            action, prev_dir = greedy_action(V_nav, danger, maze, goals,
+                                              obs.player_position, prev_dir, snap, lam)
+            obs, state, reward, done, info = env.step(state, action)
+            return (obs, state, prev_dir), (state.score, done)
+
+        (obs, state, _), (scores, dones) = jax.lax.scan(step, init_carry, xs=None, length=max_steps)
+
+        # score at the step the episode actually ended (first done), else the last step
+        first_done = jnp.argmax(dones)                     # index of first True (0 if never done)
+        ended = jnp.any(dones)
+        final_idx = jnp.where(ended, first_done, max_steps - 1)
+        return scores[final_idx]
+
+    return jax.vmap(episode)(seeds)     # (n_seeds,) array of final scores
 
 # --- Danger fn ---
 def make_net_danger_fn(env, enc, model_path):
@@ -216,34 +216,35 @@ def make_net_danger_fn(env, enc, model_path):
     return danger_fn
 
 # --- Main ---
-def main(maze_id=0, render=True, seed=0):
-    #test environment and related game encoder head
-
+def main(maze_id=0, mode="score", seed=0, n_seeds=10):
     env = jaxatari.make("pacman")
     env.consts = env.consts.replace(RESET_LEVEL=1 + 2 * maze_id)
-
     enc = make_pacman_encoder(env, maze_id=maze_id)
 
-    #danger source - switch this for the test
-    #danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
+    #danger_fn = handcrafted_danger(enc.snap, shape=enc.walkable.shape, threat=THREAT)
     danger_fn = make_net_danger_fn(env, enc, "outputs/weights/mspacman_v4.msgpack")
 
-    scores = []
-    score, frames, heatmap = run(env, enc, danger_fn, lam=LAMBDA, seed=seed)
-    print(f"[test] lambda={LAMBDA}")
-    print(f"[test] score={score}  frames={len(frames)}")
-    if render:
+    if mode == "render":
+        score, frames, heatmap = run(env, enc, danger_fn, lam=LAMBDA, seed=seed)
+        print(f"[test] maze={maze_id} seed={seed} score={score}")
         save_gif(frames, f"gifs/pacman_{maze_id}_{seed}.gif")
-        save_gif(heatmap, f"gifs/heatmap_pacman_{maze_id}_{seed}.gif", fps=15)
-    scores.append(score)
-    #print(f"[test] maze {maze_id}  mean score={np.mean(scores):.1f}  std={np.std(scores):.1f}")
-    #plot_curve()
- 
+        if heatmap:
+            save_gif(heatmap, f"gifs/heatmap_pacman_{maze_id}_{seed}.gif", fps=15)
+        return score
+
+    elif mode == "score":
+        seeds = jnp.arange(n_seeds)
+        scores = run_batch(env, enc, danger_fn, seeds)
+        print(f"[test] maze={maze_id}  mean={float(scores.mean()):.1f}  std={float(scores.std()):.1f}")
+        return scores
+
 if __name__ == "__main__":
+    # fast batched scoring across mazes
     for maze_id in range(4):
-        for seed in range(4):
-            try:
-                print(f"\n=== TEST MAZE {maze_id}, SEED {seed} ===")
-                main(maze_id=maze_id, seed=seed)
-            except Exception as e:
-                print(f"Error occurred: {e}")
+        try:
+            main(maze_id=maze_id, mode="score", n_seeds=10)
+        except Exception as e:
+            print(f"Error on maze {maze_id}: {e}")
+
+    # one rendered demo (pick a maze/seed you care about for the report)
+    main(maze_id=0, mode="render", seed=0)
