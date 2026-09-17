@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 from navigation import plan, greedy_action
 from mspacman_encoder import make_mspacman_encoder
+from pacman_encoder import make_pacman_encoder
 
 MAX_STEPS = 3000
 SEED = 0
@@ -218,10 +219,10 @@ def make_net_danger_fn(env, enc, model_path):
 def main(maze_id=0, render=True, seed=0):
     #test environment and related game encoder head
 
-    env = jaxatari.make("mspacman")
+    env = jaxatari.make("pacman")
     env.consts = env.consts.replace(RESET_LEVEL=1 + 2 * maze_id)
 
-    enc = make_mspacman_encoder(env, maze_id=maze_id)
+    enc = make_pacman_encoder(env, maze_id=maze_id)
 
     #danger source - switch this for the test
     #danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
@@ -232,8 +233,8 @@ def main(maze_id=0, render=True, seed=0):
     print(f"[test] lambda={LAMBDA}")
     print(f"[test] score={score}  frames={len(frames)}")
     if render:
-        save_gif(frames, f"gifs/mspacman_{maze_id}_{seed}.gif")
-        save_gif(heatmap, f"gifs/heatmap_mspacman_{maze_id}_{seed}.gif", fps=15)
+        save_gif(frames, f"gifs/pacman_{maze_id}_{seed}.gif")
+        save_gif(heatmap, f"gifs/heatmap_pacman_{maze_id}_{seed}.gif", fps=15)
     scores.append(score)
     #print(f"[test] maze {maze_id}  mean score={np.mean(scores):.1f}  std={np.std(scores):.1f}")
     #plot_curve()
