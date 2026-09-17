@@ -223,7 +223,7 @@ def main(maze_id=0, render=True, seed=0):
 
     enc = make_mspacman_encoder(env, maze_id=maze_id)
 
-    # danger source - switch this for the test
+    #danger source - switch this for the test
     #danger_fn = handcrafted_danger(enc.snap, threat=THREAT)
     danger_fn = make_net_danger_fn(env, enc, "outputs/weights/mspacman_v4.msgpack")
 
