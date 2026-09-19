@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from navigation import plan
-from game_encoder import GameEncoder
+from encoders.game_encoder import GameEncoder
 
 import chex
 import jaxatari.games.jax_pacman as game

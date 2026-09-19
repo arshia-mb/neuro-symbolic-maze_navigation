@@ -212,7 +212,9 @@ def make_net_danger_fn(env, enc, model_path):
     template = net.init(jax.random.PRNGKey(0), enc.features(state, obs, enc.maze, enc.walkable))
     params = load_params(template, model_path)
     def danger_fn(obs, state):
-        return net.apply(params, enc.features(state, obs, enc.maze, enc.walkable))
+        dangerous = jnp.any((state.ghosts.modes < 3))  #game specific 
+        raw = net.apply(params, enc.features(state, obs, enc.maze, enc.walkable))
+        return jnp.where(dangerous, raw, jnp.zeros_like(raw))
     return danger_fn
 
 # --- Main ---
@@ -240,11 +242,11 @@ def main(maze_id=0, mode="score", seed=0, n_seeds=10):
 
 if __name__ == "__main__":
     # fast batched scoring across mazes
-    for maze_id in range(4):
-        try:
-            main(maze_id=maze_id, mode="score", n_seeds=10)
-        except Exception as e:
-            print(f"Error on maze {maze_id}: {e}")
+    #for maze_id in range(4):
+    #    try:
+    #        main(maze_id=maze_id, mode="score", n_seeds=10)
+    #    except Exception as e:
+    #        print(f"Error on maze {maze_id}: {e}")
 
     # one rendered demo (pick a maze/seed you care about for the report)
     main(maze_id=0, mode="render", seed=0)

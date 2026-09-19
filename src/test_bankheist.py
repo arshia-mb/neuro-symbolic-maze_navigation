@@ -28,6 +28,7 @@ LARGE_COST = 1e6
 
 TILE = 3  # confirmed real collision-box size (see bankheist_grid_encoder.py)
 
+# --- Utility ---
 def save_gif(frames, path, fps=30):
     try:
         import imageio.v2 as imageio
@@ -58,6 +59,7 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
     initial_map = state.map_collision
     prev_dir = jnp.int32(0)
     frames = [] if render else None
+    #heatmap = [] if render else None
     banks_seen = False
 
     for t in range(max_steps):
@@ -76,6 +78,7 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
 
         if render:
             frames.append(np.asarray(env.render(state), dtype=np.uint8))
+            
         if bool(done):
             break
 
@@ -108,8 +111,9 @@ def main():
     danger_fn = make_net_danger_fn(env, enc, "outputs/weights/mspacman_v4.msgpack")
 
     score, frames = run(env, enc, danger_fn, lam=LAMBDA, seed=SEED)
+
     print(f"[test] money={score}  frames={len(frames)}")
-    save_gif(frames, "gifs/bankheist_0.gif")
+    save_gif(frames, "gifs/bankheist_1.gif")
 
 if __name__ == "__main__":
     main()
