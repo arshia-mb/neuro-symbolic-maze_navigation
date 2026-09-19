@@ -1,23 +1,38 @@
-import jax, jaxatari
-from encoders.pacman_encoder import make_pacman_encoder, pellet_indices, pos_to_grid
+import jax, jax.numpy as jnp, jaxatari, numpy as np
+from navigation import plan, greedy_action
+from encoders.bankhiest_encoder import make_bankheist_encoder
 
-env = jaxatari.make("pacman")
-enc = make_pacman_encoder(env, maze_id=0)
+env = jaxatari.make("bankheist")
 obs, state = env.reset(jax.random.PRNGKey(0))
+enc = make_bankheist_encoder(state)
+initial_map = state.map_collision
 
-print("pellets shape:", obs.pellets.shape)          # expect (18, 8)
-print("maze shape:", enc.maze.shape)                 # is it (40,44,4)?
-print("pellets true:", int(obs.pellets.sum()))
-goals = enc.goal(obs, enc.walkable, enc.gx, enc.gy)
-print("goal mask sum:", int(goals.sum()))            # should ≈ pellets true
-print("player cell:", pos_to_grid(obs.player_position), "walkable there:", 
-      bool(enc.walkable[pos_to_grid(obs.player_position)]))
+print(f"walkable {enc.walkable.shape}  maze {enc.maze.shape}")
+print(f"walkable cells: {int(enc.walkable.sum())} / {enc.walkable.size}")
 
-import numpy as np
+obs, state = env.reset(jax.random.PRNGKey(0))
+enc = make_bankheist_encoder(state)
+zero_danger = lambda obs, state: jnp.zeros(enc.walkable.shape)
 
-# print a handful of raw pellet coords and compare to where the player/walkable cells are
-gx, gy = enc.gx, enc.gy   # the precomputed pellet index arrays, shape (18, 8) each
-px_idx, py_idx = np.where(np.asarray(obs.pellets))   # which (row,col) IN THE PELLET GRID actually have pellets
-print("sample pellet grid cells with pellets:", list(zip(px_idx[:5], py_idx[:5])))
-print("their mapped maze cells:", [(int(gx[px_idx[i], py_idx[i]]), int(gy[px_idx[i], py_idx[i]])) for i in range(5)])
-print("walkable at those maze cells:", [bool(enc.walkable[int(gx[px_idx[i],py_idx[i]]), int(gy[px_idx[i],py_idx[i]])]) for i in range(5)])
+prev_dir = jnp.int32(0)
+frames = []
+for t in range(600):
+    goals = enc.goal(obs, enc.walkable, enc.gx, enc.gy)
+    V = plan(enc.maze, goals, enc.walkable)
+    dng = zero_danger(obs, state)
+    pos = jnp.array([obs.player.x, obs.player.y])
+    action, prev_dir = greedy_action(V, dng, enc.maze, goals, pos, prev_dir, enc.snap, lam=0.0)
+
+    if t % 25 == 0:
+        px, py = enc.snap(pos)
+        nav4 = [float(V[px, py-1]), float(V[px+1, py]), float(V[px-1, py]), float(V[px, py+1])]
+        print(f"t={t:3d} cell=({int(px):2d},{int(py):2d}) V_here={float(V[px,py]):.0f} "
+              f"nav(u,r,l,d)={[round(n,0) for n in nav4]} action={int(action)} money={int(state.money)}")
+
+    obs, state, r, done, info = env.step(state, action)
+    frames.append(np.asarray(env.render(state), dtype=np.uint8))
+    if bool(done): break
+
+import imageio.v2 as imageio
+imageio.mimsave("gifs/bh_nav_only.gif", frames, fps=30)
+print(f"money={int(state.money)}  frames={len(frames)}")

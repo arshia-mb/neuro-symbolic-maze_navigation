@@ -5,14 +5,6 @@ EXACTLY, so a DangerNet trained on one game is at least shape-compatible
 with the other, and -- where the underlying game semantics genuinely
 correspond -- channel-meaning-compatible too.
 
-Built from CONFIRMED real facts (verified against jax_bankheist.py source):
-  - state.map_collision is live pytree data (a jnp.array), NOT a file
-    dependency -- available directly off any real `state`.
-  - map_collision is indexed [x, y] (confirmed from check_background_collision).
-  - Wall/collision threshold: value >= 255 (confirmed from source).
-  - COLLISION_BOX=(8,8) -- tile size chosen to match this exactly.
-  - BankHeist real action indices: UP=2, RIGHT=3, LEFT=4, DOWN=5.
-
 8-CHANNEL SCHEMA (matching mspacman_encoder.extract_features exactly):
   ch 0-3: maze legal-move mask (DOF), as float32 -- direct analog of
           Ms. Pac-Man's env.consts.DOF_MAZES; here derived FROM walkable
@@ -36,32 +28,57 @@ Built from CONFIRMED real facts (verified against jax_bankheist.py source):
           (radians? degrees? discrete direction code?) has NOT been
           confirmed against a real observation -- verify this on your
           first real run before trusting these two channels.
-
-NOT yet verified against a real env (sprites blocked in this sandbox):
-  - map_collision's exact pixel value range (assumed wall >= 255-ish;
-    WALL_THRESHOLD=128 used defensively).
-  - obs.enemies.orientation's actual encoding (see ch 6-7 note above).
 """
 import jax
 import jax.numpy as jnp
+from jax import lax
 
-from .bh_nav import build_legal_moves, plan
-from src.game_encoder import GameEncoder
+from navigation import build_legal_moves, plan
+from encoders.game_encoder import GameEncoder
 
-TILE = 8  # matches COLLISION_BOX exactly -- real physics granularity
-WALL_THRESHOLD = 128  # defensive; change to 255 if you confirm map is binary
+TILE = 4
+COLLISION_BOX = 8          # car footprint, from jax_bankheist.py consts
+WALL_VALUE = 255           # check_background_collision uses `collision >= 255`
 LARGE_COST = 1e6
 
 
+def _walkable_from_collision(raw, tile=TILE, box=COLLISION_BOX):
+    """Cell is walkable iff SOME box-sized anchor inside that cell is collision-free.
+
+    Mirrors check_background_collision: the car occupies a `box`x`box` region and a
+    position is blocked if any pixel in that region is a wall. A tile is then open
+    if at least one anchor within it admits a clear box -- using a single fixed
+    anchor per tile is too strict, since BankHeist's roads are ~box wide and only
+    a narrow band of anchors actually fits.
+    """
+    blocked = lax.reduce_window(
+        raw.astype(jnp.float32), -jnp.inf, lax.max,
+        window_dimensions=(box, box), window_strides=(1, 1), padding="VALID",
+    ) >= float(WALL_VALUE)                       # (W_px-box+1, H_px-box+1)
+
+    W = raw.shape[0] // tile
+    H = raw.shape[1] // tile
+
+    pad_w = max(W * tile - blocked.shape[0], 0)
+    pad_h = max(H * tile - blocked.shape[1], 0)
+    blocked = jnp.pad(blocked, ((0, pad_w), (0, pad_h)),
+                      constant_values=True)[:W * tile, :H * tile]
+
+    tiles = blocked.reshape(W, tile, H, tile)
+    return ~jnp.all(tiles, axis=(1, 3))  
+
 def _snap(pos, walkable_shape):
-    """pos: (x, y) pixel position -> (gx, gy) tile index. Simple floor
-    division -- Bank Heist's map_collision is a UNIFORM pixel grid (no
-    irregular offsets like Ms. Pac-Man's pellet grid had)."""
-    x, y = pos[0], pos[1]
+    x, y = pos[0], pos[1] - 1        # match check_background_collision's y offset
     gx = jnp.clip((x // TILE).astype(jnp.int32), 0, walkable_shape[0] - 1)
     gy = jnp.clip((y // TILE).astype(jnp.int32), 0, walkable_shape[1] - 1)
     return gx, gy
 
+def _angle_to_delta(angle):
+    """orientation (degrees) -> (dx, dy) unit vector, matching the DIR_* enum
+    in jax_bankheist.py: 0=UP, 90=RIGHT, 180=DOWN, 270=LEFT (y grows downward)."""
+    dx = jnp.where(angle == 90.0, 1.0, jnp.where(angle == 270.0, -1.0, 0.0))
+    dy = jnp.where(angle == 180.0, 1.0, jnp.where(angle == 0.0, -1.0, 0.0))
+    return dx, dy
 
 def _goal(obs, walkable, gx_grid, gy_grid):
     """Build a (W,H) boolean goal mask from currently-active banks."""
@@ -101,8 +118,7 @@ def _features(state, obs, maze, walkable):
 
     # ch 6-7: enemy movement direction, from orientation -- UNVERIFIED encoding, see docstring
     active_f = dangerous.astype(jnp.float32)
-    vx_vals = jnp.cos(obs.enemies.orientation) * active_f
-    vy_vals = jnp.sin(obs.enemies.orientation) * active_f
+    vx_vals, vy_vals = _angle_to_delta(obs.enemies.orientation)
     vx = jnp.zeros(walkable.shape, jnp.float32).at[ex, ey].set(vx_vals)
     vy = jnp.zeros(walkable.shape, jnp.float32).at[ex, ey].set(vy_vals)
 
@@ -119,18 +135,10 @@ def make_bankheist_encoder(state):
     Ms. Pac-Man schema (see module docstring for exact channel semantics
     and what's verified vs. assumed).
     """
-    raw = state.map_collision  # confirmed [x, y] indexed
-    W_px, H_px = raw.shape
+    raw = state.map_collision                    # (160, 210), [x, y]
 
-    pad_w = (-W_px) % TILE
-    pad_h = (-H_px) % TILE
-    if pad_w or pad_h:
-        raw = jnp.pad(raw, ((0, pad_w), (0, pad_h)), constant_values=255)  # pad as WALL
-
-    W, H = raw.shape[0] // TILE, raw.shape[1] // TILE
-    tiles = raw.reshape(W, TILE, H, TILE)
-    tile_max = jnp.max(tiles, axis=(1, 3))
-    walkable = tile_max < WALL_THRESHOLD
+    walkable = _walkable_from_collision(raw)
+    W, H = walkable.shape
 
     maze = build_legal_moves(walkable)
     gx_grid, gy_grid = jnp.meshgrid(jnp.arange(W), jnp.arange(H), indexing="ij")
@@ -145,55 +153,3 @@ def make_bankheist_encoder(state):
         features=_features,
         enemy_pos=_enemy_pos,
     )
-
-
-if __name__ == "__main__":
-    # Smoke test with a SYNTHETIC map_collision (since real one needs sprites):
-    # a simple room, walls on the border.
-    from jaxatari.environment import ObjectObservation
-
-    W_px, H_px = 160, 210
-    fake_map = jnp.zeros((W_px, H_px), dtype=jnp.float32)
-    fake_map = fake_map.at[0:8, :].set(255).at[-8:, :].set(255)
-    fake_map = fake_map.at[:, 0:8].set(255).at[:, -8:].set(255)
-
-    class FakeState:
-        pass
-    state = FakeState()
-    state.map_collision = fake_map
-
-    enc = make_bankheist_encoder(state)
-    print("walkable shape:", enc.walkable.shape)
-    print("maze shape:", enc.maze.shape)
-
-    player = ObjectObservation.create(x=jnp.array(80.0), y=jnp.array(100.0),
-                                       width=jnp.array(8.0), height=jnp.array(8.0), active=jnp.array(1))
-    enemies = ObjectObservation.create(
-        x=jnp.array([90.0, 0.0, 0.0]), y=jnp.array([110.0, 0.0, 0.0]),
-        width=jnp.full((3,), 8.0), height=jnp.full((3,), 8.0),
-        active=jnp.array([1, 0, 0]),
-        orientation=jnp.array([0.5, 0.0, 0.0]),
-    )
-    banks = ObjectObservation.create(
-        x=jnp.array([60.0, 130.0, 0.0]), y=jnp.array([90.0, 40.0, 0.0]),
-        width=jnp.full((3,), 8.0), height=jnp.full((3,), 8.0), active=jnp.array([1, 1, 0]))
-    dynamite = ObjectObservation.create(x=jnp.array(0.0), y=jnp.array(0.0),
-                                         width=jnp.array(8.0), height=jnp.array(8.0), active=jnp.array(0))
-
-    class FakeObs:
-        pass
-    obs = FakeObs()
-    obs.player, obs.enemies, obs.banks, obs.dynamite = player, enemies, banks, dynamite
-
-    feats = enc.features(state, obs, enc.maze, enc.walkable)
-    print("features shape:", feats.shape, "(expect (W, H, 8))")
-    print("nan check:", bool(jnp.isnan(feats).any()))
-
-    goals = enc.goal(obs, enc.walkable, enc.gx, enc.gy)
-    print("goal mask sum (expect 2, matching 2 active banks):", int(goals.sum()))
-
-    gx, gy = enc.snap((jnp.array(80.0), jnp.array(100.0)))
-    print("snap(80,100) ->", (int(gx), int(gy)))
-
-    ep = enc.enemy_pos(obs)
-    print("enemy_pos shape:", ep.shape, "(expect (3,2))")

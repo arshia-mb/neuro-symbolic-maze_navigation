@@ -1,6 +1,7 @@
 import jax 
 import jax.numpy as jnp
-from navigation import plan, GameEncoder
+from navigation import plan
+from game_encoder import GameEncoder
 import chex
 from jaxatari.games.jax_mspacman import get_level_maze
 

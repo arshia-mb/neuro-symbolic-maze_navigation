@@ -1,7 +1,5 @@
 import jax 
 import jax.numpy as jnp
-from typing import Callable, NamedTuple
-import chex
 
 LARGE_COST = 1e6
 RELAX_IT = 128
@@ -9,7 +7,7 @@ DIR_TO_ACTION = 2 #direction to action
 LAMBDA = 1.0 
 
 # ----- Navigation -----
-def plan(maze, goal_mask, walkable):
+def plan(maze, goal_mask, walkable, relax_it=RELAX_IT):
     """Value iteration maze solver. Distance to nearest goal cell.
     """    
     V_init = jnp.where(goal_mask, 0.0, LARGE_COST)
@@ -27,7 +25,9 @@ def plan(maze, goal_mask, walkable):
         V = jnp.where(walkable, V, LARGE_COST)
         V = jnp.minimum(V, LARGE_COST)
         return V, None
-    V, _ = jax.lax.scan(relax, V_init, xs=None, length=RELAX_IT)
+
+    relax_it = max(int(relax_it), walkable.shape[0] + walkable.shape[1] + 4)    
+    V, _ = jax.lax.scan(relax, V_init, xs=None, length=relax_it)
     return V
 
 
@@ -46,17 +46,17 @@ def greedy_action(V, danger, maze, goal_mask, pos, prev_dir, snap, lam=LAMBDA):
     d = jnp.where(goal_mask[gx, gy], prev_dir, d).astype(jnp.int32) #coasting until we reach the pellet pixel
     return d + DIR_TO_ACTION, d
 
+#--- Maze Building ---
+def build_legal_moves(walkable):
+    """
+    Build the (W, H, 4) legality mask from a plain walkable grid.
+    A move is legal if the destination cell is in-bounds AND walkable.
+    Direction order matches plan()'s convention: [UP, RIGHT, LEFT, DOWN].
+    """
+    W, H = walkable.shape
+    up_ok    = jnp.pad(walkable, ((0, 0), (1, 0)), constant_values=False)[:, :-1]
+    right_ok = jnp.pad(walkable, ((0, 1), (0, 0)), constant_values=False)[1:, :]
+    left_ok  = jnp.pad(walkable, ((1, 0), (0, 0)), constant_values=False)[:-1, :]
+    down_ok  = jnp.pad(walkable, ((0, 0), (0, 1)), constant_values=False)[:, 1:]
 
-# ----- Encoder -----
-class GameEncoder(NamedTuple):
-    # --- static data (computed once, per game) ---
-    maze: chex.Array        # (H, W, 4) DOF legality
-    walkable: chex.Array    # (H, W) bool
-    gx: chex.Array          # goal-cell x indices (precomputed)
-    gy: chex.Array          # goal-cell y indices
-
-    # --- game-specific functions ---
-    snap: Callable          # pos -> (gx, gy)
-    goal: Callable          # (obs, walkable, gx, gy) -> (H,W) goal mask
-    features: Callable      # (obs, maze, walkable) -> (H,W,C) net input
-    enemy_pos: Callable     # obs -> enemy pixel positions (for danger later)
+    return jnp.stack([up_ok, right_ok, left_ok, down_ok], axis=-1)
