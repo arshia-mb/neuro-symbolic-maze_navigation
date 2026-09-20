@@ -29,7 +29,7 @@ def pellet_indices(pellets: chex.Array):
     return gx, gy
 
 @jax.jit
-def get_goals(obs: chex.Array, walkable: chex.Array, gx: chex.Array, gy: chex.Array):
+def get_goals(obs: chex.Array, walkable: chex.Array, gx: chex.Array, gy: chex.Array, state=None):
     mask = jnp.zeros(walkable.shape, dtype=jnp.bool_)
     mask = mask.at[gx, gy].set(obs.pellets.astype(jnp.bool_))
     return mask & walkable

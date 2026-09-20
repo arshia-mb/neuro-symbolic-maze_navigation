@@ -18,6 +18,17 @@ Source files:
 
 For each game to be tested or trained on the net an encoder head is needed:
 - `mspacman_encoder.py` — the Ms. Pac-Man adapter: pulls features out of the observation and builds the `GameEncoder` the core consumes.
+- `alien_encoder.py` — the Alien adapter: converts Alien's collision map and stateful eggs/enemies into the same interface.
+
+Alien can be wired into the shared agent with:
+
+```python
+import jaxatari
+from encoders.alien_encoder import make_alien_encoder
+
+env = jaxatari.make("alien")
+encoder = make_alien_encoder(env)
+```
 
 
 `legacy/` holds earlier single-field versions kept for reference. `examples/gifs/` holds demo GIFs (navigation, danger avoidance, the reward-hack failure, etc.).  `outputs/` holds trained weights and training curves.

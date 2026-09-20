@@ -11,7 +11,7 @@ class GameEncoder(NamedTuple):
 
     # --- game-specific functions ---
     snap: Callable          # pos -> (gx, gy)
-    goal: Callable          # (obs, walkable, gx, gy) -> (H,W) goal mask
+    goal: Callable          # (obs, walkable, gx, gy, state) -> (H,W) goal mask
     features: Callable      # (obs, maze, walkable) -> (H,W,C) net input
     enemy_pos: Callable     # obs -> enemy pixel positions (for danger later)
     player_pos: Callable    # obs -> (2,) player pixel position
