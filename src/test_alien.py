@@ -75,7 +75,7 @@ def main():
     print("maze shape:", encoder.maze.shape)
     print("features shape:", features_shape)
     print("steps:", steps)
-    print("final score:", int(state.level.score))
+    print("final score:", int(jnp.ravel(state.level.score)[0]))
     print("remaining eggs:", int(jnp.sum(state.eggs[:, :, 2])))
 
 
