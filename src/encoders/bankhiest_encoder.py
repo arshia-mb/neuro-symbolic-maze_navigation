@@ -81,13 +81,11 @@ def _angle_to_delta(angle):
     return dx, dy
 
 def _goal(obs, walkable, gx_grid, gy_grid):
-    """Build a (W,H) boolean goal mask from currently-active banks."""
-    bank_gx = jnp.clip((obs.banks.x // TILE).astype(jnp.int32), 0, walkable.shape[0] - 1)
-    bank_gy = jnp.clip((obs.banks.y // TILE).astype(jnp.int32), 0, walkable.shape[1] - 1)
-    active = obs.banks.active > 0
-
-    goals = jnp.zeros(walkable.shape, dtype=bool)
-    goals = goals.at[bank_gx, bank_gy].set(active | goals[bank_gx, bank_gy])
+    W, H = walkable.shape
+    pos = jnp.stack([obs.banks.x, obs.banks.y], axis=-1)
+    bgx, bgy = jax.vmap(lambda p: _snap(p, (W, H)))(pos)
+    active = (obs.banks.active > 0).astype(jnp.int32)
+    goals = jnp.zeros((W, H), jnp.int32).at[bgx, bgy].max(active) > 0
     return goals & walkable  # matches mspacman_encoder's get_goals: mask & walkable
 
 
@@ -109,10 +107,10 @@ def _features(state, obs, maze, walkable):
     dist_to_player = jnp.where((dist_to_player < LARGE_COST) & walkable, dist_to_player, -1.0)
 
     # ch 5: distance to nearest DANGEROUS enemy, -1.0 sentinel
-    ex = jnp.clip((obs.enemies.x // TILE).astype(jnp.int32), 0, W - 1)
-    ey = jnp.clip((obs.enemies.y // TILE).astype(jnp.int32), 0, H - 1)
-    dangerous = obs.enemies.active > 0  # no frightened/mode field on Bank Heist enemies
-    enemy_mask = jnp.zeros(walkable.shape, bool).at[ex, ey].set(dangerous)
+    pos = jnp.stack([obs.enemies.x, obs.enemies.y], axis=-1)
+    ex, ey = jax.vmap(lambda p: _snap(p, (W, H)))(pos)
+    dangerous = obs.enemies.active > 0
+    enemy_mask = jnp.zeros((W, H), jnp.int32).at[ex, ey].max(dangerous.astype(jnp.int32)) > 0
     dist_to_enemy = plan(maze, enemy_mask, walkable)
     dist_to_enemy = jnp.where((dist_to_enemy < LARGE_COST) & walkable, dist_to_enemy, -1.0)
 

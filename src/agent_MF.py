@@ -29,6 +29,7 @@ LAMBDA = 8.0
 DEATH_PENALTY = 50.0
 DANGER_WEIGHT = 0.05
 DANGER_RADIUS = 10
+AUX_WEIGHT = 0.05
 
 
 # ----- DangerNet -----
@@ -36,21 +37,34 @@ class DangerNet(nn.Module):
     """CNN calculating the danger value for each node based on feature inputs.
     """
     hidden: int = 32
+    #dist_scale: float = 20.0
+
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(self.hidden, (3,3), padding="SAME")(x)
-        x = nn.relu(x)
-        x = nn.Conv(self.hidden, (3,3), padding="SAME")(x)
-        x = nn.relu(x)
-        x = nn.Conv(1, (1,1), padding="SAME")(x)
-        return jax.nn.sigmoid(x[..., 0]) * DANGER_MAX
+        #dof, d_agent, d_enemy, vdir = x[..., :4], x[..., 4:5], x[..., 5:6], x[..., 6:8]
+        #def prox(d): #normalized proximity
+        #    return jnp.where(d >=0, jnp.clip(1.0 - d / self.dist_scale, 0.0, 1.0), 0.0) 
+        #x = jnp.concatenate([dof, prox(d_agent), prox(d_enemy), vdir], axis=-1) #normalized channels
 
+        has_danger = jnp.any(x[..., 5:6] >= 0, axis=(-3, -2, -1))
+
+        x = jnp.concatenate([x[..., :4], x[..., 5:]], axis=-1)
+        x = nn.Conv(self.hidden, (3,3), padding="SAME")(x)
+        x = nn.relu(x)
+        x = nn.Conv(self.hidden, (3,3), padding="SAME")(x)
+        x = nn.relu(x)
+        x = nn.Conv(1, (1, 1))(x)
+        out = jax.nn.sigmoid(x[..., 0]) * DANGER_MAX
+
+        return jnp.where(has_danger[..., None, None], out, 0.0)
+    
 def policy(V, danger, maze, goal_mask, pos, prev_dir, key, snap, temperature=1.0):
     """Stochastic, differentiable policy.
     """
     gx, gy = snap(pos)
     V_nbr = jnp.array([V[gx, gy - 1], V[gx + 1, gy], V[gx - 1, gy], V[gx, gy + 1]])
     dng_nbr = jnp.array([danger[gx, gy - 1], danger[gx + 1, gy], danger[gx - 1, gy], danger[gx, gy + 1]])
+    dng_nbr = dng_nbr ** 2 / DANGER_MAX
     score = V_nbr + LAMBDA * dng_nbr
 
     legal = maze[gx, gy]
@@ -122,10 +136,8 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
     def episode_loss(params,key):
         reset_key, noop_key, warmup_key, key = jax.random.split(key, 4)
         obs, state = env.reset(reset_key)
-        
 
         n_warmup = jax.random.randint(noop_key, (), 0, MAX_WARMUP)
-
         #Random Start
         def warmup_step(carry, i):
             obs, state, key = carry
@@ -149,12 +161,22 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             state, obs, prev_dir, prev_lives, key = carry
             key, act_key = jax.random.split(key)
 
-            danger = net.apply(params, features(state, obs, maze, walkable))
+            feats = features(state, obs, maze, walkable)
+
+            danger = net.apply(params, feats)
+            d_ghosts = feats[..., 5]            
+
             goals = get_goal(obs, walkable, gx, gy)
             V = jax.lax.stop_gradient(plan(maze, goals, walkable))  
             action, logp, prev_dir = policy(V, danger, maze, goals, obs.player_position, prev_dir, act_key, snap)
            
             obs, state, reward, done, _ = env.step(state, action)
+
+            #Aux-loss
+            target = jnp.where(d_ghosts>=0, 
+                               jnp.clip(1.0 - d_ghosts / DANGER_RADIUS,0.0,1.0), 0.0) * DANGER_MAX
+            target = jax.lax.stop_gradient(target)
+            aux = jnp.mean((danger - target) ** 2)
 
             # Ghost-Proximity Penalty
             pgx, pgy = snap(obs.player_position)                    
@@ -162,7 +184,8 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             dist = jax.lax.stop_gradient(plan(maze, agent_mask, walkable))
             ggx = (obs.ghost_positions[:, 0] + 5) // 4             
             ggy = (obs.ghost_positions[:, 1] + 3) // 4
-            nearest = jnp.min(dist[ggx, ggy])
+            dangerous = state.ghosts.modes < 3
+            nearest = jnp.min(jnp.where(dangerous, dist[ggx, ggy], LARGE_COST))
             prox_penalty = jnp.maximum(DANGER_RADIUS - nearest, 0.0)
 
             # Death Penalty 
@@ -172,26 +195,31 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             reward = reward - DEATH_PENALTY * died - DANGER_WEIGHT * prox_penalty
 
             new_carry = (state, obs, prev_dir, lives, key)
-            output = (logp, reward, done)
+            output = (logp, reward, done, aux)
             return new_carry, output
 
-        final_carry, (logps, rewards, dones) = jax.lax.scan(step, init_carry, xs=None, length=episode_len)
-        loss, total_return = reinforce_loss(logps, rewards, dones)
-        return loss, total_return
+        final_carry, (logps, rewards, dones, auxs) = jax.lax.scan(step, init_carry, xs=None, length=episode_len)
+        pg_loss, total_return = reinforce_loss(logps, rewards, dones)
+
+        mask = ((jnp.cumsum(dones.astype(jnp.int32)) - dones.astype(jnp.int32)) == 0).astype(jnp.float32) 
+        aux_loss = (auxs * mask).sum() / jnp.maximum(mask.sum(), 1.0)
+
+        loss = pg_loss + AUX_WEIGHT * aux_loss
+        return loss, (total_return, aux_loss)
 
     def batch_loss(params, key):
         keys = jax.random.split(key, N_ENV)
-        losses, returns = jax.vmap(episode_loss, in_axes=(None, 0))(params,keys)
-        return losses.mean(), returns.mean()
+        losses, (returns, auxs) = jax.vmap(episode_loss, in_axes=(None, 0))(params,keys)
+        return losses.mean(), (returns.mean(), auxs.mean())
 
     @jax.jit
     def update(params, opt_state, key):
-        (loss, total_return), grads = jax.value_and_grad(batch_loss, has_aux=True)(params,key)
+        (loss, (total_return, aux_loss)), grads = jax.value_and_grad(batch_loss, has_aux=True)(params,key)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         gnorm = jnp.sqrt(sum(jnp.sum(g**2) for g in jax.tree_util.tree_leaves(grads)))
-        return params, opt_state, loss, total_return, gnorm
-
+        return params, opt_state, loss, total_return, aux_loss, gnorm
+        
     avg_return = None
     returns_log = []
     best_return = -1e9
@@ -200,7 +228,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
     start = time.time()
     for epoch in range(epochs):
         key, sub = jax.random.split(key)
-        params, opt_state, loss, total_return, gnorm = update(params, opt_state, sub)
+        params, opt_state, loss, total_return, aux_loss, gnorm = update(params, opt_state, sub)
 
         avg_return = float(total_return) if avg_return is None else 0.9 * avg_return + 0.1 * float(total_return)
         returns_log.append(float(total_return))
@@ -209,7 +237,7 @@ def train(env, game_encoder, model_path, seed=0, epochs=EPOCHS, episode_len=MAX_
             elapsed = time.time() - start 
             per_epoch = elapsed / (epoch + 1)
             eta = per_epoch * (epochs - epoch - 1)
-            print(f"epoch {epoch}  return {float(total_return):.0f}  avg {avg_return:.0f}  gnorm {float(gnorm):.2f}  [ETA {eta/60:.1f} min]")
+            print(f"epoch {epoch}  return {float(total_return):.0f}  avg {avg_return:.0f} aux {float(aux_loss):.2f}  gnorm {float(gnorm):.2f}  [ETA {eta/60:.1f} min]")
 
         if float(total_return) > best_return:
             best_return = float(total_return)

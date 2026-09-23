@@ -17,8 +17,9 @@ from encoders.pacman_encoder import make_pacman_encoder
 
 MAX_STEPS = 3000
 SEED = 0
-LAMBDA = 8.0   
-LARGE_COST = 1e6     
+LAMBDA = 8.0 
+LARGE_COST = 1e6  
+DANGER_MAX = 10   
 
 # ----- Utility -----
 def save_gif(frames, path, fps=30):
@@ -64,25 +65,35 @@ def save_danger_heatmap(danger, obs, snap, t, save_dir="outputs/debug_frames"):
     plt.savefig(f"{save_dir}/danger_t{t:04d}.png", dpi=80)
     plt.close()
 
-def danger_heatmap_frame(danger, obs, snap, t):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
+def danger_heatmap_frame(danger, player_px, enemy_px, snap, t,
+                         enemy_active=None, auto_scale=True, danger_max=10.0):
+    """Game-agnostic danger heatmap. Positions are PIXEL coords; `snap` maps them to cells."""
     d = np.asarray(danger)
-    fig, ax = plt.subplots(figsize=(6, 5))
-    im = ax.imshow(d.T, origin="upper", cmap="hot", vmin=0, vmax=10)   # fixed scale!
-    plt.colorbar(im, ax=ax, label="danger")
-    gxp, gyp = snap(obs.player_position)
-    ax.plot(int(gxp), int(gyp), "co", markersize=8)
-    for g in obs.ghost_positions:
-        ggx = int((g[0] + 5) // 4); ggy = int((g[1] + 3) // 4)
-        ax.plot(ggx, ggy, "b+", markersize=10)
-    ax.set_title(f"danger t={t}")
+    if auto_scale:
+        vmin, vmax = float(d.min()), float(d.max())
+        if vmax - vmin < 1e-6:                    # all-zero field (gate off) -> avoid degenerate scale
+            vmax = vmin + 1.0
+    else:
+        vmin, vmax = 0.0, danger_max
 
+    fig, ax = plt.subplots(figsize=(6, 5))
+    im = ax.imshow(d.T, origin="upper", cmap="hot", vmin=vmin, vmax=vmax, interpolation="nearest")
+    plt.colorbar(im, ax=ax, label="danger")
+
+    px, py = snap(jnp.asarray(player_px))
+    ax.plot(int(px), int(py), "co", markersize=8)
+
+    enemy_px = np.asarray(enemy_px)
+    active = (np.ones(len(enemy_px), bool) if enemy_active is None
+              else np.asarray(enemy_active) > 0)
+    for (ex, ey), a in zip(enemy_px, active):
+        if a:                                     # skip inactive police parked at (0,0)
+            gx, gy = snap(jnp.array([ex, ey]))
+            ax.plot(int(gx), int(gy), "b+", markersize=10, markeredgewidth=2)
+
+    ax.set_title(f"danger t={t}  [{vmin:.2f}, {vmax:.2f}]")
     fig.canvas.draw()
-    frame = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
-    frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (4,))[..., :3]  # drop alpha
+    frame = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
     plt.close(fig)
     return frame
 
@@ -147,26 +158,38 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=SEED, max_steps=MAX_STEPS, render=
     snap, get_goal = enc.snap, enc.goal
 
     @jax.jit
-    def decide(obs, state, prev_dir):
+    def decide(obs, state, prev_dir, lam):
         goals = get_goal(obs, walkable, gx, gy)
         V_nav = plan(maze, goals, walkable)
         danger = danger_fn(obs, state)
-        action, d = greedy_action(V_nav, danger, maze, goals, obs.player_position, prev_dir, snap, lam)
+        danger_eff = danger ** 2 / DANGER_MAX
+        action, d = greedy_action(V_nav, danger_eff, maze, goals, obs.player_position, prev_dir, snap, lam)
         return action, d, V_nav, danger      # return the fields for debugging
 
     obs, state = env.reset(jax.random.PRNGKey(seed))
     prev_dir = jnp.int32(0)
     frames = [] if render else None
     heatmap = [] if render else None
+    recent = []
+    escape = 0
     print(f"[debug] initial state: score={state.score}  lives={state.lives}")
 
     for t in range(max_steps):
-        action, prev_dir, V_nav, danger = decide(obs, state, prev_dir)
+        action, prev_dir, V_nav, danger = decide(obs, state, prev_dir, lam)
         obs, state, reward, done, info = env.step(state, action)
+
+        gxp, gyp = (int(c) for c in snap(obs.player_position)) 
+        recent = (recent + [(gxp, gyp)])[-40:]
+        if len(recent) == 40 and len(set(recent)) <= 2 and t % 20 == 0:
+            nbr = lambda f: [round(float(f[gxp, gyp-1]), 2), round(float(f[gxp+1, gyp]), 2),
+                            round(float(f[gxp-1, gyp]), 2), round(float(f[gxp, gyp+1]), 2)]
+            print(f"[stuck t={t}] cell=({gxp},{gyp})  nav={nbr(V_nav)}  dng={nbr(danger)}  (u,r,l,d)")
+
         if render:
             frames.append(np.asarray(env.render(state), dtype=np.uint8))
         if render and t % 2 == 0:              # every 2nd step, keep GIF size sane
-            heatmap.append(danger_heatmap_frame(danger, obs, snap, t))
+            heatmap.append(danger_heatmap_frame(danger, obs.player_position, obs.ghost_positions, snap, t))
+
         if bool(done):
             break
 
@@ -212,26 +235,27 @@ def make_net_danger_fn(env, enc, model_path):
     template = net.init(jax.random.PRNGKey(0), enc.features(state, obs, enc.maze, enc.walkable))
     params = load_params(template, model_path)
     def danger_fn(obs, state):
-        dangerous = jnp.any((state.ghosts.modes < 3))  #game specific 
+        #dangerous = jnp.any((state.ghosts.modes < 3))  #game specific 
         raw = net.apply(params, enc.features(state, obs, enc.maze, enc.walkable))
-        return jnp.where(dangerous, raw, jnp.zeros_like(raw))
+        return raw
     return danger_fn
 
 # --- Main ---
 def main(maze_id=0, mode="score", seed=0, n_seeds=10):
-    env = jaxatari.make("pacman")
+    env = jaxatari.make("mspacman")
     env.consts = env.consts.replace(RESET_LEVEL=1 + 2 * maze_id)
-    enc = make_pacman_encoder(env, maze_id=maze_id)
+    enc = make_mspacman_encoder(env, maze_id=maze_id)
 
     #danger_fn = handcrafted_danger(enc.snap, shape=enc.walkable.shape, threat=THREAT)
-    danger_fn = make_net_danger_fn(env, enc, "outputs/weights/mspacman_v4.msgpack")
+    danger_fn = make_net_danger_fn(env, enc, "outputs/mspacman_best.msgpack")
 
     if mode == "render":
         score, frames, heatmap = run(env, enc, danger_fn, lam=LAMBDA, seed=seed)
         print(f"[test] maze={maze_id} seed={seed} score={score}")
-        save_gif(frames, f"gifs/pacman_{maze_id}_{seed}.gif")
+        save_gif(frames, f"gifs/mspacman_{maze_id}_{seed}.gif")
         if heatmap:
-            save_gif(heatmap, f"gifs/heatmap_pacman_{maze_id}_{seed}.gif", fps=15)
+            save_gif(heatmap, f"gifs/heatmap_mspacman_{maze_id}_{seed}.gif", fps=15)
+        plot_curve()
         return score
 
     elif mode == "score":
