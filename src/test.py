@@ -51,9 +51,9 @@ ENCODERS = {
     "bankheist": make_bankheist_encoder
     }
 MAZE_GAMES = {"mspacman", "pacman"}  #games whose start maze is chosen via RESET_LEVEL
-N_MAZES = {"mspacman": 4, "pacman": 4, "bankheist": 1}   # BankHeist always starts on city 0
+N_MAZES = {"mspacman": 3, "pacman": 4, "bankheist": 1}   # BankHeist always starts on city 0
 
-WEIGHTS = "outputs/weights/mspacman_v6.msgpack"
+WEIGHTS = "models/mspacman_v6.msgpack"
 OUT_DIR = "outputs/gifs"
 
 MAX_STEPS = 3000
@@ -275,6 +275,13 @@ def danger_heatmap_frame(danger, player_px, enemy_px, snap, t, enemy_active=None
 
 # ----- Main -----
 def main(game="mspacman", mode="render", maze_id=0, mazes=None, seed=0, n_seeds=10, danger="net", weights=WEIGHTS, max_steps=MAX_STEPS):
+    
+    #maze_id validator
+    if game == "mspacman":
+        if maze_id > 3:
+            print(f"[debug] {maze_id} is not within 0-3 for game 'mspacman'. Please select an acceptable maze")
+            return 
+    
     if mode == "render":
         env = make_env(game, maze_id)
         enc = ENCODERS[game](env, maze_id=maze_id)
