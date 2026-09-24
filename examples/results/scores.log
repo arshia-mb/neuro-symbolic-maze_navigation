@@ -1,0 +1,15 @@
+[score] mspacman maze=0 danger=net  mean=2087.0  std=729.8  min=1180  max=3670  (n=10)
+[score] mspacman maze=1 danger=net  mean=1630.0  std=485.7  min=760  max=2440  (n=10)
+[score] mspacman maze=2 danger=net  mean=1842.0  std=859.8  min=900  max=4080  (n=10)
+[score] mspacman maze=3 danger=net  mean=2503.0  std=1914.9  min=1280  max=6330  (n=10)
+[score] mspacman ALL mazes=[0, 1, 2, 3] danger=net mean=2015.5  std=1182.8  (n=40)
+[score] pacman maze=0 danger=net  mean=9.0  std=0.0  min=9  max=9  (n=10)
+[warn] maze 1: encoder doesn't match the start layout for seeds [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[score] pacman maze=1 danger=net  mean=1.0  std=0.0  min=1  max=1  (n=10)
+[warn] maze 2: encoder doesn't match the start layout for seeds [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[score] pacman maze=2 danger=net  mean=1.0  std=0.0  min=1  max=1  (n=10)
+[warn] maze 3: encoder doesn't match the start layout for seeds [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[score] pacman maze=3 danger=net  mean=1.0  std=0.0  min=1  max=1  (n=10)
+[score] pacman ALL mazes=[0, 1, 2, 3] danger=net mean=3.0  std=3.5  (n=40)
+[score] bankheist maze=0 danger=net  mean=60.0  std=0.0  min=60  max=60  (n=10)
+[score] bankheist ALL mazes=[0] danger=net mean=60.0  std=0.0  (n=10)

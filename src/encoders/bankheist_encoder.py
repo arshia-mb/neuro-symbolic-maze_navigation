@@ -124,7 +124,7 @@ def _features(state, obs, maze, walkable):
     return jnp.concatenate([dof, scalar], axis=-1)  # (W, H, 8)
 
 
-def make_bankheist_encoder(state):
+def make_bankheist_encoder(env, maze_id=None, seed=0):
     """
     Build the encoder from a real `state` (e.g. from env.reset()). Reads
     state.map_collision directly -- no sprite files needed beyond having
@@ -133,6 +133,8 @@ def make_bankheist_encoder(state):
     Ms. Pac-Man schema (see module docstring for exact channel semantics
     and what's verified vs. assumed).
     """
+    obs, state = obs, state = env.reset(jax.random.PRNGKey(seed))
+    start_map = int(state.map_id)
     raw = state.map_collision                    # (160, 210), [x, y]
 
     walkable = _walkable_from_collision(raw)
@@ -150,4 +152,8 @@ def make_bankheist_encoder(state):
         goal=_goal,
         features=_features,
         enemy_pos=_enemy_pos,
+        player_pos=lambda obs: jnp.stack([obs.player.x, obs.player.y]),
+        score=lambda state: state.money,
+        enemy_active=lambda obs, state: obs.enemies.active > 0,
+        valid=lambda state: state.map_id == start_map,
     )

@@ -56,17 +56,29 @@ def extract_features(state, obs, maze, walkable):
     scalar = jnp.stack([dist.astype(jnp.float32), ghosts, vx, vy], axis=-1)
     return jnp.concatenate([maze.astype(jnp.float32), scalar], axis=-1)
 
-def make_pacman_encoder(env: chex.Array, maze_id=None) -> GameEncoder:
+MAX_LEVELS = 64
+
+def make_pacman_encoder(env: chex.Array, maze_id=None, seed=0) -> GameEncoder:
     """Create game encoder interface for agent to use."""
-    obs, state = env.reset(jax.random.PRNGKey(0))
+    obs, state = env.reset(jax.random.PRNGKey(seed))
     if maze_id is None:
         maze_id = game.get_level_maze(state.level.id)
+    level_to_maze = jnp.array([int(game.get_level_maze(jnp.int32(l))) for l in range(MAX_LEVELS)])
     maze = game.PacmanMaze.precompute_dof(maze_id=maze_id)
     walkable = maze.any(axis=-1)
     gx, gy = pellet_indices(obs.pellets)
 
     return GameEncoder(
-        maze=maze, walkable=walkable, gx=gx, gy=gy,
-        snap=pos_to_grid, goal=get_goals, features=extract_features,
+        maze=maze,
+        walkable=walkable,
+        gx=gx,
+        gy=gy,
+        snap=pos_to_grid,                     # your existing functions, passed by name
+        goal=get_goals,
+        features=extract_features,
         enemy_pos=lambda obs: obs.ghost_positions,
+        player_pos=lambda obs: obs.player_position,
+        score=lambda state: state.score,
+        enemy_active=lambda obs, state: state.ghosts.modes < 3,
+        valid=lambda state: level_to_maze[jnp.clip(state.level.id, 0, MAX_LEVELS - 1)] == maze_id,
     )

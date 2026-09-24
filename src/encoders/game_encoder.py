@@ -14,3 +14,7 @@ class GameEncoder(NamedTuple):
     goal: Callable          # (obs, walkable, gx, gy) -> (H,W) goal mask
     features: Callable      # (obs, maze, walkable) -> (H,W,C) net input
     enemy_pos: Callable     # obs -> enemy pixel positions (for danger later)
+    player_pos: Callable    # obs -> (2,) player pixel position
+    score: Callable         # state -> scalar game score
+    enemy_active: Callable  # (obs, state) -> (n,) bool, enemies that count as dangerous
+    valid: Callable         # state -> bool, False once the encoder no longer matches the game

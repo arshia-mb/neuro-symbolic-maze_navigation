@@ -1,0 +1,30 @@
+[render] mspacman maze=0 seed=0 danger=net  score=1490  steps=2191
+[gif] wrote outputs/gifs/mspacman_net_0_0.gif  (2191 frames)
+[gif] wrote outputs/gifs/heatmap_mspacman_net_0_0.gif  (548 frames)
+[render] mspacman maze=0 seed=0 danger=handcrafted  score=3750  steps=3000
+[gif] wrote outputs/gifs/mspacman_handcrafted_0_0.gif  (3000 frames)
+[gif] wrote outputs/gifs/heatmap_mspacman_handcrafted_0_0.gif  (750 frames)
+[render] mspacman maze=0 seed=0 danger=none  score=1080  steps=1535
+[gif] wrote outputs/gifs/mspacman_none_0_0.gif  (1535 frames)
+[gif] wrote outputs/gifs/heatmap_mspacman_none_0_0.gif  (384 frames)
+[render] pacman maze=0 seed=0 danger=net  score=9  steps=924
+[gif] wrote outputs/gifs/pacman_net_0_0.gif  (924 frames)
+[gif] wrote outputs/gifs/heatmap_pacman_net_0_0.gif  (231 frames)
+[render] pacman maze=0 seed=0 danger=handcrafted  score=13  steps=1280
+[gif] wrote outputs/gifs/pacman_handcrafted_0_0.gif  (1280 frames)
+[gif] wrote outputs/gifs/heatmap_pacman_handcrafted_0_0.gif  (320 frames)
+[render] pacman maze=0 seed=0 danger=none  score=12  steps=768
+[gif] wrote outputs/gifs/pacman_none_0_0.gif  (768 frames)
+[gif] wrote outputs/gifs/heatmap_pacman_none_0_0.gif  (192 frames)
+[render] bankheist maze=0 seed=0 danger=net  score=60  steps=3000
+[gif] wrote outputs/gifs/bankheist_net_0_0.gif  (3000 frames)
+[gif] wrote outputs/gifs/heatmap_bankheist_net_0_0.gif  (750 frames)
+[render] bankheist maze=0 seed=0 danger=handcrafted  score=60  steps=3000
+[gif] wrote outputs/gifs/bankheist_handcrafted_0_0.gif  (3000 frames)
+[gif] wrote outputs/gifs/heatmap_bankheist_handcrafted_0_0.gif  (750 frames)
+[render] bankheist maze=0 seed=0 danger=none  score=60  steps=3000
+[gif] wrote outputs/gifs/bankheist_none_0_0.gif  (3000 frames)
+[gif] wrote outputs/gifs/heatmap_bankheist_none_0_0.gif  (750 frames)
+[render] mspacman maze=2 seed=0 danger=net  score=900  steps=1651
+[gif] wrote outputs/gifs/mspacman_net_2_0.gif  (1651 frames)
+[gif] wrote outputs/gifs/heatmap_mspacman_net_2_0.gif  (413 frames)

@@ -57,13 +57,16 @@ def extract_features(state, obs, maze, walkable):
 
     return jnp.concatenate([maze.astype(jnp.float32), scalar], axis=-1)
 
-def make_mspacman_encoder(env: chex.Array, maze_id=None) -> GameEncoder:
+MAX_LEVELS = 64
+
+def make_mspacman_encoder(env: chex.Array, maze_id=None, seed=0) -> GameEncoder:
     """Create game encoder interface for agent to use
     """
     # precompute goal indices once (needs a sample obs for the pellet shape)
-    obs, state = env.reset(jax.random.PRNGKey(0))
+    obs, state = env.reset(jax.random.PRNGKey(seed))
     if maze_id is None:
         maze_id = get_level_maze(state.level.id)
+    level_to_maze = jnp.array([int(get_level_maze(jnp.int32(l))) for l in range(MAX_LEVELS)])
     maze = env.consts.DOF_MAZES[maze_id]
     walkable = maze.any(axis=-1)
     gx, gy = pellet_indices(obs.pellets)      # your existing function
@@ -77,4 +80,8 @@ def make_mspacman_encoder(env: chex.Array, maze_id=None) -> GameEncoder:
         goal=get_goals,
         features=extract_features,
         enemy_pos=lambda obs: obs.ghost_positions,
+        player_pos=lambda obs: obs.player_position,
+        score=lambda state: state.score,
+        enemy_active=lambda obs, state: state.ghosts.modes < 3,
+        valid=lambda state: level_to_maze[jnp.clip(state.level.id, 0, MAX_LEVELS - 1)] == maze_id,
     )
