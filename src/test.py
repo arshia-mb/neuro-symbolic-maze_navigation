@@ -1,26 +1,36 @@
 """
 Test / evaluation for the neuro-symbolic agent.
- 
+
 All game-specific details come from the GameEncoder, so this file is game-agnostic.
- 
+
+Decision rule (navigation.greedy_action): danger is turned into a per-cell cost
+(LAMBDA * danger_cost), goals inside dangerous areas are dropped, the planner finds the
+cheapest route to a remaining goal with danger as traversal cost, and the agent moves
+to the neighbor with the lowest entry cost + cost-to-go.
+
 Modes:
-  render -- play one greedy episode on one maze, save a game GIF and a danger-heatmap GIF
+  render -- play one greedy episode on one maze and save a game GIF.
+            With --debug, also save a view GIF (see --view).
   score  -- batched evaluation (jit + vmap over seeds) on every selected maze, no rendering;
-            prints per-maze and overall statistics. Use this mode for reported numbers.
- 
-Both modes use the same decision function (`make_decide`), so rendered runs and
-batched scores always evaluate the same policy.
- 
+            prints per-maze and overall score and survival. Use this for reported numbers.
+
+Debug views (render --debug):
+  danger -- the danger heatmap
+  plan   -- danger heatmap and planner side by side: cost-to-goal field V, the path the
+            agent is following (white), its current target (yellow star) and the goals
+            it is considering (cyan)
+
 Danger sources:
   net         -- learned DangerNet (default)
   handcrafted -- fixed-radius danger around every dangerous enemy (baseline)
   none        -- zero danger, i.e. navigation only (baseline)
- 
+
 Usage:
   python src/test.py --mode render --maze 0 --seed 0
-  python src/test.py --mode render --game bankheist --danger handcrafted
-  python src/test.py --mode score                          # all mazes, 10 seeds each
-  python src/test.py --mode score --danger none --n-seeds 20
+  python src/test.py --mode render --debug                  # + danger/planner view
+  python src/test.py --mode render --debug --view danger
+  python src/test.py --mode score                           # all mazes, 10 seeds each
+  python src/test.py --mode score --danger none --max-steps 8000
   python src/test.py --mode score --game pacman --mazes 0 2
 """
 import os
@@ -30,7 +40,7 @@ os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.6")
 import argparse
 
 import matplotlib
-matplotlib.use("Agg")  # headless rendering (WSL / no display)
+matplotlib.use("Agg")                    # headless rendering (WSL / no display)
 import matplotlib.pyplot as plt
 
 import jax
@@ -38,42 +48,43 @@ import jax.numpy as jnp
 import jaxatari
 import numpy as np
 
-
-from navigation import plan, greedy_action
+from navigation import greedy_action, LARGE_COST
 from agent_MF import DangerNet, load_params, danger_cost, LAMBDA, DANGER_MAX
 from encoders.mspacman_encoder import make_mspacman_encoder
 from encoders.pacman_encoder import make_pacman_encoder
 from encoders.bankheist_encoder import make_bankheist_encoder
 
 ENCODERS = {
-    "mspacman": make_mspacman_encoder, 
+    "mspacman": make_mspacman_encoder,
     "pacman": make_pacman_encoder,
-    "bankheist": make_bankheist_encoder
-    }
-MAZE_GAMES = {"mspacman", "pacman"}  #games whose start maze is chosen via RESET_LEVEL
+    "bankheist": make_bankheist_encoder,
+}
+START_LEVEL = {                          # level on which each maze first appears
+    "mspacman": lambda m: 1 + 2 * m,     # maze changes every 2 levels
+    "pacman": lambda m: 1 + m,           # maze changes every level
+}
 N_MAZES = {"mspacman": 4, "pacman": 4, "bankheist": 1}   # BankHeist always starts on city 0
 
-WEIGHTS = "outputs/weights/mspacman_v6.msgpack"
+WEIGHTS = "models/mspacman_v6.msgpack"
 OUT_DIR = "outputs/gifs"
 
 MAX_STEPS = 3000
-HEATMAP_EVERY = 4   #render a heatmap frame every N steps
-HEATMAP_DPI = 60    #small figures keep render-mode memory low
-DEBUG = False       #print neighbor values when the agent looks stuck - or other debug purposes
-STUCK_WINDOW = 40   # in frames; the agent needs several frames per cell
-
+VIEW_EVERY = 4           # debug view: one frame every N steps
+VIEW_DPI = 60            # small figures keep render-mode memory low
 
 # ----- Environment -----
 def make_env(game, maze_id=0):
-    """Fresh env per maze: jitted reset/step are cached on the env object, so reusing one env across mazes could silently keep the old maze."""
+    """Fresh env per maze: jitted reset/step are cached on the env object,
+    so reusing one env across mazes could silently keep the old maze."""
     env = jaxatari.make(game)
-    if game in MAZE_GAMES:
-        env.consts = env.consts.replace(RESET_LEVEL=1 + 2 * maze_id)   # start on a level using maze_id
+    if game in START_LEVEL:
+        env.consts = env.consts.replace(RESET_LEVEL=START_LEVEL[game](maze_id))
     return env
 
-# --- Danger source ---
+
+# ----- Danger sources -----
 def make_net_danger_fn(env, enc, model_path):
-    """Learned Danger: the net applies the danger based on enc features"""
+    """Learned danger: DangerNet applied to the encoder's features."""
     net = DangerNet()
     obs, state = env.reset(jax.random.PRNGKey(0))
     template = net.init(jax.random.PRNGKey(0), enc.features(state, obs, enc.maze, enc.walkable))
@@ -83,9 +94,10 @@ def make_net_danger_fn(env, enc, model_path):
         return net.apply(params, enc.features(state, obs, enc.maze, enc.walkable))
     return danger_fn
 
-#handcrafted danger
-THREAT = DANGER_MAX
-RADIUS = 4 
+
+THREAT = DANGER_MAX      # handcrafted threat, on the same scale as the net's output
+RADIUS = 4               # handcrafted danger radius (cells)
+
 
 def danger_field(enemy_cells, threat, shape, radius=RADIUS):
     """Box-distance danger around each enemy, fading linearly to 0 at `radius`."""
@@ -95,12 +107,13 @@ def danger_field(enemy_cells, threat, shape, radius=RADIUS):
     ey = enemy_cells[:, 1][None, None, :]
     dist = jnp.maximum(jnp.abs(xs - ex), jnp.abs(ys - ey))
     contrib = jnp.where(dist <= radius, threat[None, None, :] * (1.0 - dist / (radius + 1)), 0.0)
-    return contrib.max(axis=-1) # strongest enemy per cell 
+    return contrib.max(axis=-1)          # strongest enemy per cell
+
 
 def make_handcrafted_danger_fn(enc, threat=THREAT, radius=RADIUS):
     """Handcrafted baseline: fixed-radius danger around every dangerous enemy."""
     shape = enc.walkable.shape
- 
+
     def danger_fn(obs, state):
         pos = enc.enemy_pos(obs)
         ex, ey = jax.vmap(enc.snap)(pos)
@@ -109,11 +122,12 @@ def make_handcrafted_danger_fn(enc, threat=THREAT, radius=RADIUS):
         return danger_field(cells, threats, shape, radius)
     return danger_fn
 
-#navigation baseline
+
 def make_zero_danger_fn(enc):
     """Navigation-only baseline."""
     zeros = jnp.zeros(enc.walkable.shape)
     return lambda obs, state: zeros
+
 
 def make_danger_fn(kind, env, enc, weights=WEIGHTS):
     """Build the danger source selected on the command line."""
@@ -123,43 +137,36 @@ def make_danger_fn(kind, env, enc, weights=WEIGHTS):
         return make_handcrafted_danger_fn(enc)
     return make_zero_danger_fn(enc)
 
-# --- Decision rule ---
+# ----- Decision rule (shared by render and score modes) -----
 def make_decide(enc, danger_fn, lam=LAMBDA):
-    """Descend V_nav + lam * danger_cost(danger) over the four neighbors."""
-    maze, walkable, gx, gy = enc.maze, enc.walkable, enc.gx, enc.gy
- 
+    """Danger -> per-cell cost -> navigation.greedy_action.
+    Returns (action, direction, V, danger, goals_used)."""
     def decide(obs, state, prev_dir):
-        goals = enc.goal(obs, walkable, gx, gy)
-        V = plan(maze, goals, walkable)
         danger = danger_fn(obs, state)
-        action, d = greedy_action(V, danger_cost(danger), maze, goals, enc.player_pos(obs), prev_dir, enc.snap, lam)
-        return action, d, V, danger
+        goals = enc.goal(obs, enc.walkable, enc.gx, enc.gy)
+        action, d, V, used = greedy_action(enc.maze, enc.walkable, goals, lam * danger_cost(danger), enc.player_pos(obs), prev_dir, enc.snap)
+        return action, d, V, danger, used
     return decide
 
-# --- Game Tests ---   
-def run(env, enc, danger_fn, lam=LAMBDA, seed=0, max_steps=MAX_STEPS, debug=DEBUG):
-    """One greedy episode with rendering"""
+
+# ----- Rollouts -----
+def run(env, enc, danger_fn, lam=LAMBDA, seed=0, max_steps=MAX_STEPS, debug=False, view="plan"):
+    """One greedy episode with rendering. Returns (score, game_frames, view_frames);
+    view frames are only produced with `debug`."""
     decide = jax.jit(make_decide(enc, danger_fn, lam))
 
-    obs, state = env.reset(jax.random.PRNGKey(seed)) 
+    obs, state = env.reset(jax.random.PRNGKey(seed))
     prev_dir = jnp.int32(0)
-    frames, heatmap, recent = [], [], []   
-
-    #print(f"[debug] initial state: score={state.score}  lives={state.lives}")
+    frames, views = [], []
 
     for t in range(max_steps):
-        action, prev_dir, V, danger = decide(obs, state, prev_dir)
+        action, prev_dir, V, danger, goals = decide(obs, state, prev_dir)
+        
+        if debug and t % VIEW_EVERY == 0:        # drawn from the state the agent decided on
+            views.append(view_frame(view, t, obs, state, V, danger, goals, enc, lam))
+
         obs, state, reward, done, info = env.step(state, action)
-
-        if debug:
-            cell = tuple(int(c) for c in enc.snap(enc.player_pos(obs)))
-            recent = (recent + [cell])[-STUCK_WINDOW:]
-            if len(recent) == STUCK_WINDOW and len(set(recent)) <= 2 and t % 20 == 0:
-                print(f"[stuck t={t}] cell={cell} nav={neighbors(V, *cell)}  dng={neighbors(danger, *cell)}  (u,r,l,d)")
-
         frames.append(np.asarray(env.render(state), dtype=np.uint8))
-        if t % HEATMAP_EVERY == 0:            
-             heatmap.append(danger_heatmap_frame(danger, enc.player_pos(obs), enc.enemy_pos(obs), enc.snap, t, enemy_active=enc.enemy_active(obs, state)))
 
         if bool(done):
             break
@@ -167,60 +174,131 @@ def run(env, enc, danger_fn, lam=LAMBDA, seed=0, max_steps=MAX_STEPS, debug=DEBU
             print(f"[run] encoder no longer matches the game at t={t} (map/maze changed), stopping")
             break
 
-    return int(enc.score(state)), frames, heatmap
+    return int(enc.score(state)), frames, views
+
 
 def run_batch(env, enc, danger_fn, seeds, lam=LAMBDA, max_steps=MAX_STEPS):
-    """Batched greedy episodes over `seeds` (no rendering). Returns final score per seed."""
+    """Batched greedy episodes over `seeds` (no rendering). Returns (final score, steps survived) per seed. An episode ends at `done` or as
+    soon as the encoder no longer matches the game; both values freeze at that step."""
     decide = make_decide(enc, danger_fn, lam)
 
     def episode(seed):
         obs, state = env.reset(jax.random.PRNGKey(seed))
 
         def step(carry, _):
-            obs, state, prev_dir, alive, score = carry
-            action, prev_dir, _, _ = decide(obs, state, prev_dir)
+            obs, state, prev_dir, alive, score, steps = carry
+            action, prev_dir, *_ = decide(obs, state, prev_dir)
             obs, state, _, done, _ = env.step(state, action)
             score = jnp.where(alive, enc.score(state).astype(jnp.float32), score)
+            steps = steps + alive.astype(jnp.int32)
             alive = alive & ~done & enc.valid(state)
-            return (obs, state, prev_dir, alive, score), None
-            
-        init = (obs, state, jnp.int32(0), jnp.bool_(True), enc.score(state).astype(jnp.float32))
-        (_, _, _, _, score), _ = jax.lax.scan(step, init, xs=None, length=max_steps)
-        return score
+            return (obs, state, prev_dir, alive, score, steps), None
 
-    return jax.jit(jax.vmap(episode))(seeds)    # (n_seeds,) array of final scores
+        init = (obs, state, jnp.int32(0), jnp.bool_(True),
+                enc.score(state).astype(jnp.float32), jnp.int32(0))
+        (*_, score, steps), _ = jax.lax.scan(step, init, xs=None, length=max_steps)
+        return score, steps
+
+    return jax.jit(jax.vmap(episode))(seeds)
+
 
 def score_mazes(game, mazes, n_seeds, danger, weights=WEIGHTS, max_steps=MAX_STEPS):
-    """Run `n_seeds` batched episodes on every maze in `mazes`. 
-    Prints per-maze and overall statistics; returns all scores."""
-    all_scores = []
+    """Run `n_seeds` batched episodes on every maze in `mazes`. Prints per-maze and overall score and survival; returns all scores."""
+    all_scores, all_steps = [], []
     for m in mazes:
         env = make_env(game, m)
         enc = ENCODERS[game](env, maze_id=m)
- 
+
         # guard the assumption that the start layout doesn't depend on the seed
         bad = [s for s in range(n_seeds)
                if not bool(enc.valid(env.reset(jax.random.PRNGKey(s))[1]))]
         if bad:
             print(f"[warn] maze {m}: encoder doesn't match the start layout for seeds {bad}")
- 
+
         danger_fn = make_danger_fn(danger, env, enc, weights)
-        scores = np.asarray(run_batch(env, enc, danger_fn, jnp.arange(n_seeds), max_steps=max_steps))
+        scores, steps = run_batch(env, enc, danger_fn, jnp.arange(n_seeds), max_steps=max_steps)
+        scores, steps = np.asarray(scores), np.asarray(steps)
         print(f"[score] {game} maze={m} danger={danger}  "
               f"mean={scores.mean():.1f}  std={scores.std():.1f}  "
-              f"min={scores.min():.0f}  max={scores.max():.0f}  (n={n_seeds})")
+              f"min={scores.min():.0f}  max={scores.max():.0f}  "
+              f"survive={steps.mean():.0f}/{max_steps}  (n={n_seeds})")
         all_scores.append(scores)
- 
-    all_scores = np.concatenate(all_scores)
-    print(f"[score] {game} ALL mazes={list(mazes)} danger={danger} mean={all_scores.mean():.1f}  std={all_scores.std():.1f}  (n={len(all_scores)})")
+        all_steps.append(steps)
+
+    all_scores, all_steps = np.concatenate(all_scores), np.concatenate(all_steps)
+    print(f"[score] {game} ALL mazes={list(mazes)} danger={danger}  "
+          f"mean={all_scores.mean():.1f}  std={all_scores.std():.1f}  "
+          f"survive={all_steps.mean():.0f}/{max_steps}  (n={len(all_scores)})")
     return all_scores
 
-# ----- Utility -----
-def neighbors(field, x, y):
-    """Field values at the four neighbors of (x, y), in [up, right, left, down] order."""
-    vals = (field[x, y - 1], field[x + 1, y], field[x - 1, y], field[x, y + 1])
-    return [round(float(v), 2) for v in vals]
 
+# ----- Debug view -----
+MOVES = [(0, -1), (1, 0), (-1, 0), (0, 1)]      # [up, right, left, down] in cells
+
+def trace_path(V, cost, maze, goals, start, max_len=80):
+    """Follow the agent's rule (argmin cost[n] + V[n]) from `start` until a goal."""
+    V, cost, maze, goals = (np.asarray(a) for a in (V, cost, maze, goals))
+    W, H = V.shape
+    x, y = start[0] % W, start[1] % H
+    path = [(x, y)]
+    for _ in range(max_len):
+        if goals[x, y]:
+            break
+        q = [cost[(x + dx) % W, (y + dy) % H] + V[(x + dx) % W, (y + dy) % H]
+             if maze[x, y, i] else np.inf for i, (dx, dy) in enumerate(MOVES)]
+        i = int(np.argmin(q))
+        if not np.isfinite(q[i]):
+            break
+        x, y = (x + MOVES[i][0]) % W, (y + MOVES[i][1]) % H
+        path.append((x, y))
+    return path
+
+V_VMAX = 100.0  
+def view_frame(view, t, obs, state, V, danger, goals, enc, lam):
+    """RGB frame of the agent's view: 'danger' (heatmap) or 'plan' (heatmap + planner).
+    Both panels use fixed color ranges, so frames are comparable over time."""
+    W, H = enc.walkable.shape
+    cx, cy = (int(c) for c in enc.snap(enc.player_pos(obs)))
+    cx, cy = cx % W, cy % H                                          # tunnels wrap
+    active = np.asarray(enc.enemy_active(obs, state)) > 0
+    enemies = [tuple(int(c) % s for c, s in zip(enc.snap(jnp.asarray(p)), (W, H)))
+               for p, a in zip(np.asarray(enc.enemy_pos(obs)), active) if a]
+
+    panels = ["danger"] + (["plan"] if view == "plan" else [])
+    fig, axes = plt.subplots(1, len(panels), figsize=(5 * len(panels), 4),
+                             dpi=VIEW_DPI, squeeze=False)
+
+    for ax, kind in zip(axes[0], panels):
+        if kind == "danger":
+            im = ax.imshow(np.asarray(danger).T, cmap="hot", vmin=0.0, vmax=DANGER_MAX,
+                           interpolation="nearest")
+            ax.set_title(f"danger  t={t}")
+        else:
+            Vn = np.asarray(V)
+            cmap = plt.get_cmap("viridis").copy()
+            cmap.set_bad("black")                                    # walls
+            im = ax.imshow(np.where(Vn >= LARGE_COST / 10, np.nan, Vn).T, cmap=cmap,
+                           vmin=0.0, vmax=V_VMAX, interpolation="nearest")
+            gxs, gys = np.nonzero(np.asarray(goals))
+            ax.plot(gxs, gys, "c.", ms=2)                            # goals being considered
+            path = trace_path(V, lam * danger_cost(danger), enc.maze, goals, (cx, cy))
+            px, py = zip(*path)
+            ax.plot(px, py, "w-", lw=2)                              # planned path
+            ax.plot(px[-1], py[-1], "wo", ms=7, mfc="none", mew=2)   # current target
+            ax.set_title(f"planner  t={t}")
+        plt.colorbar(im, ax=ax)
+        ax.plot(cx, cy, "co", ms=8)                                  # agent
+        for ex, ey in enemies:
+            ax.plot(ex, ey, "r+", ms=12, mew=2)                      # dangerous enemies
+
+    plt.tight_layout()
+    fig.canvas.draw()
+    rgb = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+    plt.close(fig)
+    return rgb
+
+
+# ----- Output utilities -----
 def save_gif(frames, path, fps=30):
     if not frames:
         print(f"[gif] no frames, skipping {path}")
@@ -229,6 +307,7 @@ def save_gif(frames, path, fps=30):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     imageio.mimsave(path, frames, fps=fps)
     print(f"[gif] wrote {path}  ({len(frames)} frames)")
+
 
 def plot_curve(path="outputs/mspacman_returns.npy", out="outputs/curve.png"):
     """Plot a saved training-return log (raw and 20-epoch moving average)."""
@@ -242,55 +321,26 @@ def plot_curve(path="outputs/mspacman_returns.npy", out="outputs/curve.png"):
     plt.close()
     print(f"[plot] wrote {out}")
 
-def danger_heatmap_frame(danger, player_px, enemy_px, snap, t, enemy_active=None, auto_scale=True, danger_max=DANGER_MAX):
-    """Danger heatmap as an RGB array. Positions are pixel coords; `snap` maps them to cells."""
-    d = np.asarray(danger)
-    if auto_scale:
-        vmin, vmax = float(d.min()), float(d.max())
-        if vmax - vmin < 1e-6:           # all-zero field (gate off): avoid a degenerate scale
-            vmax = vmin + 1.0
-    else:
-        vmin, vmax = 0.0, danger_max
- 
-    fig, ax = plt.subplots(figsize=(5, 4), dpi=HEATMAP_DPI)
-    im = ax.imshow(d.T, origin="upper", cmap="hot", vmin=vmin, vmax=vmax, interpolation="nearest")       # .T: fields are indexed [x, y]
-    plt.colorbar(im, ax=ax, label="danger")
- 
-    px, py = snap(jnp.asarray(player_px))
-    ax.plot(int(px), int(py), "co", markersize=8)
- 
-    enemy_px = np.asarray(enemy_px)
-    active = (np.ones(len(enemy_px), bool) if enemy_active is None
-              else np.asarray(enemy_active) > 0)
-    for (ex, ey), a in zip(enemy_px, active):
-        if a:                            # only mark enemies that currently count as dangerous
-            gx, gy = snap(jnp.array([ex, ey]))
-            ax.plot(int(gx), int(gy), "b+", markersize=10, markeredgewidth=2)
- 
-    ax.set_title(f"danger t={t}  [{vmin:.2f}, {vmax:.2f}]")
-    fig.canvas.draw()
-    frame = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
-    plt.close(fig)
-    return frame
 
 # ----- Main -----
-def main(game="mspacman", mode="render", maze_id=0, mazes=None, seed=0, n_seeds=10, danger="net", weights=WEIGHTS, max_steps=MAX_STEPS):
+def main(game="mspacman", mode="render", maze_id=0, mazes=None, seed=0, n_seeds=10, danger="net", weights=WEIGHTS, max_steps=MAX_STEPS, debug=False, view="plan"):
     if mode == "render":
         env = make_env(game, maze_id)
         enc = ENCODERS[game](env, maze_id=maze_id)
         danger_fn = make_danger_fn(danger, env, enc, weights)
-        score, frames, heatmap = run(env, enc, danger_fn, seed=seed, max_steps=max_steps)
+        score, frames, views = run(env, enc, danger_fn, seed=seed, max_steps=max_steps, debug=debug, view=view)
         tag = f"{game}_{danger}_{maze_id}_{seed}"
         print(f"[render] {game} maze={maze_id} seed={seed} danger={danger}  "
               f"score={score}  steps={len(frames)}")
         save_gif(frames, f"{OUT_DIR}/{tag}.gif")
-        save_gif(heatmap, f"{OUT_DIR}/heatmap_{tag}.gif", fps=15)
+        if debug:
+            save_gif(views, f"{OUT_DIR}/{view}_{tag}.gif", fps=30 // VIEW_EVERY)
         return score
- 
+
     mazes = mazes if mazes is not None else range(N_MAZES[game])
     return score_mazes(game, mazes, n_seeds, danger, weights, max_steps)
- 
- 
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--game", default="mspacman", choices=list(ENCODERS))
@@ -302,5 +352,7 @@ if __name__ == "__main__":
     p.add_argument("--danger", default="net", choices=["net", "handcrafted", "none"])
     p.add_argument("--weights", default=WEIGHTS)
     p.add_argument("--max-steps", type=int, default=MAX_STEPS)
+    p.add_argument("--debug", action="store_true", help="render mode: also save a view GIF")
+    p.add_argument("--view", default="plan", choices=["danger", "plan"], help="debug view: danger heatmap, or heatmap + planner side by side")
     a = p.parse_args()
-    main(game=a.game, mode=a.mode, maze_id=a.maze, mazes=a.mazes, seed=a.seed, n_seeds=a.n_seeds, danger=a.danger, weights=a.weights, max_steps=a.max_steps)
+    main(game=a.game, mode=a.mode, maze_id=a.maze, mazes=a.mazes, seed=a.seed, n_seeds=a.n_seeds, danger=a.danger, weights=a.weights, max_steps=a.max_steps, debug=a.debug, view=a.view)
