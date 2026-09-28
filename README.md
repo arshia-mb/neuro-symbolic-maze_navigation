@@ -18,6 +18,8 @@ Source files:
 
 For each game to be tested or trained on the net an encoder head is needed:
 - `mspacman_encoder.py` — the Ms. Pac-Man adapter: pulls features out of the observation and builds the `GameEncoder` the core consumes.
+- `bakhesit_encoder.py` - the bankheist adapter: copies the structure and features of bankheist and maps the collision maze, banks.
+- `alien_encoder.py` — the Alien adapter: maps the collision maze, eggs, and object positions from pixels to grid cells.
 
 
 ## Run Instructions
@@ -32,7 +34,7 @@ python3 src/test.py --game mspacman --mode render    #default
 **CLI Arguments**
 | Arguments     | defaults          | choices                                                          | help                                                                                                          |
 |---------------|-------------------|------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `--game`      | mspacman          | [s] mspacman,<br> bankheist,<br> pacman                        | The games (encoder) of which to run on                                                                        |
+| `--game`      | mspacman          | [s] mspacman,<br> bankheist,<br> pacman,<br> alien               | The games (encoder) of which to run on                                                                        |
 | `--mode`      | render            | [s] render,<br> score                                          | 'render' runs and renders along the output gif and heatmap,<br> 'score' runs and output only the gotten score |
 | `--maze`      | 0                 | [int] 0-3 for mspacman,<br> 0-4 for Bankheist,<br> 04 for pacman | maze id selection for game runs                                                                               |
 | `--mazes`     | 0                 | [int] IDK                                                        | IDK                                                                                                           |

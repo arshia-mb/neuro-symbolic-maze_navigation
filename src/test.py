@@ -53,17 +53,19 @@ from agent_MF import DangerNet, load_params, danger_cost, LAMBDA, DANGER_MAX
 from encoders.mspacman_encoder import make_mspacman_encoder
 from encoders.pacman_encoder import make_pacman_encoder
 from encoders.bankheist_encoder import make_bankheist_encoder
+from encoders.alien_encoder import make_alien_encoder
 
 ENCODERS = {
     "mspacman": make_mspacman_encoder,
     "pacman": make_pacman_encoder,
     "bankheist": make_bankheist_encoder,
+    "alien": make_alien_encoder
 }
 START_LEVEL = {                          # level on which each maze first appears
     "mspacman": lambda m: 1 + 2 * m,     # maze changes every 2 levels
     "pacman": lambda m: 1 + m,           # maze changes every level
 }
-N_MAZES = {"mspacman": 4, "pacman": 4, "bankheist": 1}   # BankHeist always starts on city 0
+N_MAZES = {"mspacman": 4, "pacman": 4, "bankheist": 1, "alien": 1}   # BankHeist always starts on city 0
 
 WEIGHTS = "models/mspacman_v6.msgpack"
 OUT_DIR = "outputs/gifs"
