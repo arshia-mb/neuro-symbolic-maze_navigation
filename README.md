@@ -20,7 +20,28 @@ For each game to be tested or trained on the net an encoder head is needed:
 - `mspacman_encoder.py` — the Ms. Pac-Man adapter: pulls features out of the observation and builds the `GameEncoder` the core consumes.
 
 
-`legacy/` holds earlier single-field versions kept for reference. `examples/gifs/` holds demo GIFs (navigation, danger avoidance, the reward-hack failure, etc.).  `outputs/` holds trained weights and training curves.
+## Run Instructions
+
+Use `test.py` to test and run the model against the already fully setup game environments (Ms. Pacman, Bankheist, Pacman).
+
+Testing has been made very simple with a CLI system to select and customize the run to the users preferences. like so:
+```bash
+python3 src/test.py --game mspacman --mode render    #default
+```
+
+**CLI Arguments**
+| Arguments     | defaults          | choices                                                          | help                                                                                                          |
+|---------------|-------------------|------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `--game`      | mspacman          | [s] mspacman,<br> bankheist,<br> pacman                        | The games (encoder) of which to run on                                                                        |
+| `--mode`      | render            | [s] render,<br> score                                          | 'render' runs and renders along the output gif and heatmap,<br> 'score' runs and output only the gotten score |
+| `--maze`      | 0                 | [int] 0-3 for mspacman,<br> 0-4 for Bankheist,<br> 04 for pacman | maze id selection for game runs                                                                               |
+| `--mazes`     | 0                 | [int] IDK                                                        | IDK                                                                                                           |
+| `--seed`      | 0                 | [int] 0-6                                                        | specifies the seed for render mode                                                                            |
+| `--n-seeds`   | 10                | [int]                                                         | seeds per maze in score mode                                                                                  |
+| `--danger`    | net               | [s] net, handcrafted, none                                     | The make danger controller param                                                                              |
+| `--weights`   | WEIGHTS(constant) | [path]                                                            | The path to the weights to be used for testing                                                                |
+| `--max-steps` | 3000 (300 cycles) | [int]                                                            | The maximum steps for a test run                                                                              |
+
 
 ## Environment note (WSL + CUDA)
 
