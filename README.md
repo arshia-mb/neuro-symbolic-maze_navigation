@@ -18,6 +18,7 @@ Source files:
 
 For each game to be tested or trained on the net an encoder head is needed:
 - `mspacman_encoder.py` — the Ms. Pac-Man adapter: pulls features out of the observation and builds the `GameEncoder` the core consumes.
+- `bakhesit_encoder.py` - the bankheist adapter: copies the structure and features of bankheist and maps the collision maze, banks.
 - `alien_encoder.py` — the Alien adapter: maps the collision maze, eggs, and object positions from pixels to grid cells.
 
 

@@ -1,0 +1,5 @@
+[score] mspacman maze=0 danger=net  mean=3244.0  std=954.1  min=1750  max=4850  (n=10)
+[score] mspacman maze=1 danger=net  mean=2779.0  std=697.5  min=1870  max=4090  (n=10)
+[score] mspacman maze=2 danger=net  mean=3490.0  std=933.0  min=2130  max=4840  (n=10)
+[score] mspacman maze=3 danger=net  mean=5592.0  std=3199.8  min=1300  max=11660  (n=10)
+[score] mspacman ALL mazes=[0, 1, 2, 3] danger=net mean=3776.2  std=2071.4  (n=40)
