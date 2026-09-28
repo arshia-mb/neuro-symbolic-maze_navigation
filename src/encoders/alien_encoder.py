@@ -145,7 +145,7 @@ def make_alien_encoder(env, maze_id=None, seed=0):
         features=_features,
         enemy_pos=_enemy_pos,
         player_pos=lambda obs: jnp.stack([obs.player.x, obs.player.y]),
-        score=lambda state: state.level.score,
+        score=lambda state: state.level.score[0],
         enemy_active=lambda obs, state: (
             (obs.enemies.active > 0) & (obs.enemies_killable <= 0)
         ),

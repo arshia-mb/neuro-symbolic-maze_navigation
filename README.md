@@ -34,7 +34,7 @@ python3 src/test.py --game mspacman --mode render    #default
 **CLI Arguments**
 | Arguments     | defaults          | choices                                                          | help                                                                                                          |
 |---------------|-------------------|------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|
-| `--game`      | mspacman          | [s] mspacman,<br> bankheist,<br> pacman,<br> alien               | The games (encoder) of which to run on                                                                        |
+| `--game`      | mspacman          | [s] mspacman,<br> bankheist,<br> pacman,<br> alien              | The games (encoder) of which to run on                                                                        |
 | `--mode`      | render            | [s] render,<br> score                                          | 'render' runs and renders along the output gif and heatmap,<br> 'score' runs and output only the gotten score |
 | `--maze`      | 0                 | [int] 0-3 for mspacman,<br> 0-4 for Bankheist,<br> 04 for pacman | maze id selection for game runs                                                                               |
 | `--mazes`     | 0                 | [int] IDK                                                        | IDK                                                                                                           |
